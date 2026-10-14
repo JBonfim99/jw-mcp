@@ -47,6 +47,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -74,7 +76,5 @@ jobs:
       # Optional: redeploy automatically. Create a webhook on the Portainer
       # service/stack and save it as the repository secret PORTAINER_WEBHOOK_URL.
       - name: Redeploy on Portainer
-        env:
-          PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
         if: env.PORTAINER_WEBHOOK_URL != ''
         run: curl -fsS -X POST "$PORTAINER_WEBHOOK_URL"
