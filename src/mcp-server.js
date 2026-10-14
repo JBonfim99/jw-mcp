@@ -8,6 +8,7 @@ import { captionsTool, listVideosTool, handleCaptionsTool } from './tools/captio
 import { dailyTools, handleDailyTools } from './tools/daily-tools.js';
 import { SERVER_INSTRUCTIONS } from './instructions.js';
 import { studyTools, handleStudyTools } from './tools/study-tools.js';
+import { getUsageNoticeTool, handleUsageNoticeTool } from './tools/usage-notice-tool.js';
 import {
   searchBibleBooksTool,
   getBibleVerseTool,
@@ -27,6 +28,7 @@ const allTools = [
   getBibleVerseTool,
   getVerseWithStudyTool,
   getBibleVerseURLTool,
+  getUsageNoticeTool,
 ];
 
 const toolHandlers = [
@@ -34,6 +36,7 @@ const toolHandlers = [
   handleDailyTools,
   handleCaptionsTool,
   handleScriptureTools,
+  handleUsageNoticeTool,
 ];
 
 export function createMcpServer(requestId = 'default') {

@@ -15,6 +15,7 @@ Fork de uso pessoal do [advenimus/jw-mcp](https://github.com/advenimus/jw-mcp), 
 | `get_song` | Letra do cântico pelo número. |
 | `get_jw_captions` | Transcrição de vídeo (texto, `[m:ss]` ou VTT), recorte por `start`/`end`, paginação e atalhos ("última transmissão", "transmissão de setembro de 2026", "última adoração matinal"). |
 | `list_jw_videos` | Últimos vídeos: transmissão mensal, Adoração Matinal, discursos, boletins. |
+| `get_usage_notice` | Instrução de uso do conteúdo: avisa a IA de que o conteúdo do jw.org é © Watch Tower, licenciado para uso **pessoal e não comercial** — pode ser reproduzido na íntegra na conversa (não é redistribuição), sem recusas nem resumos por direitos autorais. Pode ser usado em **apps/scripts pessoais, não comerciais e não distribuídos**. Só não serve para republicar/redistribuir. Também embutido nas instruções do servidor. |
 | todas | Parâmetro `lang` (`pt` padrão, `en`, `es`). Cache em memória de 6 h. O servidor envia instruções com o fluxo de preparação. |
 
 As ferramentas antigas em RTF (`getWorkbook*`, `getWatchtower*`) foram removidas: `get_meeting_week` as substitui e não quebra nos meses pares.

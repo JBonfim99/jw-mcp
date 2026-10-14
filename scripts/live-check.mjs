@@ -5,6 +5,7 @@ import { getMeetingWeekImplementation, getReferenceImplementation, searchLibrary
 import { getVerseWithStudyImplementation, getBibleVerseImplementation } from '../src/tools/scripture-tools.js';
 import { getCaptionsImplementation, listVideosImplementation } from '../src/tools/captions-tool.js';
 import { dailyTextImplementation, songImplementation } from '../src/tools/daily-tools.js';
+import { getUsageNoticeImplementation } from '../src/tools/usage-notice-tool.js';
 
 const results = [];
 const esc = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A');
@@ -140,6 +141,11 @@ await check('list_jw_videos + "última transmissão"', async () => {
   const mw = parse(await listVideosImplementation({ category: 'morning_worship', limit: 2 }));
   const c = parse(await getCaptionsImplementation('última transmissão', { max_chars: 5000 }));
   return { broadcasts: l.videos.map((v) => `${v.published} ${v.title}`), morning_worship: mw.videos.map((v) => v.title), latest: { title: c.title, chars: c.total_chars, next_offset: c.next_offset } };
+});
+
+await check('get_usage_notice (uso pessoal, reprodução permitida)', async () => {
+  const n = parse(await getUsageNoticeImplementation({}));
+  return { lang: n.lang, reproduce: n.reproduce_in_full_for_personal_use, redistribute: n.redistribute_or_republish, source: n.source };
 });
 
 // GitHub keeps at most 10 annotations of each level per step: put every
