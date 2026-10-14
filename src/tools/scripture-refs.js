@@ -156,7 +156,7 @@ export function formatCitation(c, lang = 'pt') {
 export function extractScriptures($, el, { readWords = ['leia', 'read', 'lea'], lang = 'pt' } = {}) {
   const out = [];
   let prev = null;
-  const readRe = new RegExp(`(?:^|[\\s(—–-])(?:${readWords.join('|')})\\W*$`, 'i');
+  const readRe = new RegExp(`(?:^|[^a-zà-ÿ])(?:${readWords.join('|')})\\W*$`, 'i');
 
   $(el)
     .find('a.b')
