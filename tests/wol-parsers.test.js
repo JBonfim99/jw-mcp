@@ -14,8 +14,10 @@ import {
   parseMeetingsPage,
   parseSearchResults,
 } from '../src/tools/wol-document.js';
-import { selectParagraphs, isoWeek, parsePages } from '../src/tools/study-tools.js';
-import { vttToText, extractVideoId } from '../src/tools/captions-tool.js';
+import { selectParagraphs, isoWeek, parsePages, parseParagraphRefs } from '../src/tools/study-tools.js';
+import { vttToText, extractVideoId, parseVtt, cuesToTimestamped } from '../src/tools/captions-tool.js';
+import { parseBibleChapterJson, verseHtmlToText, sliceByVerse, itemsTouching, chapterDataUrl } from '../src/tools/bible-json.js';
+import { parseDailyText, parseSongbookIndex, parseSong } from '../src/tools/wol-document.js';
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const fixture = (name) => fs.readFileSync(path.join(dir, name), 'utf8');
@@ -203,7 +205,98 @@ test('iso week (meetings are indexed by ISO week)', () => {
 });
 
 test('captions helpers', () => {
-  assert.equal(extractVideoId('https://www.jw.org/finder?lank=pub-jwbvod26_2_VIDEO&wtlocale=T'), 'pub-jwbvod26_2_VIDEO');
-  const vtt = 'WEBVTT\r\n\r\n00:00:02.314 --> 00:00:05.317 line:90%\r\nTínhamos uma vida divertida.\r\n\r\n00:00:05.317 --> 00:00:06.944\r\nTivemos dois filhos.\r\n';
-  assert.equal(vttToText(vtt), 'Tínhamos uma vida divertida. Tivemos dois filhos.');
+  assert.deepEqual(extractVideoId('https://www.jw.org/finder?lank=pub-jwbvod26_2_VIDEO&wtlocale=T'), { id: 'pub-jwbvod26_2_VIDEO', ts: null });
+  assert.deepEqual(extractVideoId('https://www.jw.org/finder?&wtlocale=T&lank=pub-gnj_5_VIDEO&ts=00:14:54.39-00:15:58.83'), {
+    id: 'pub-gnj_5_VIDEO',
+    ts: '00:14:54.39-00:15:58.83',
+  });
+  const vtt =
+    'WEBVTT\r\n\r\n00:00:02.314 --> 00:00:05.317 line:90%\r\nTínhamos uma vida divertida.\r\n\r\n00:00:05.317 --> 00:00:06.944\r\nTivemos dois filhos.\r\n\r\n00:01:10.000 --> 00:01:12.500\r\nE então tudo mudou.\r\n';
+  assert.equal(vttToText(vtt), 'Tínhamos uma vida divertida. Tivemos dois filhos. E então tudo mudou.');
+  const cues = parseVtt(vtt);
+  assert.equal(cues.length, 3);
+  assert.equal(cues[2].start, 70);
+  assert.equal(cuesToTimestamped(cues), '[0:02] Tínhamos uma vida divertida. Tivemos dois filhos.\n\n[1:10] E então tudo mudou.');
+});
+
+// ---------------------------------------------------------------------------
+test('study-Bible JSON: verses, notes, cross refs, media, video clips', () => {
+  const json = JSON.parse(fixture('bible-json-mt6-pt.json'));
+  const d = parseBibleChapterJson(json, 40, 6);
+  assert.equal(d.citation, 'Mateus 6:1-34');
+  assert.deepEqual(d.verses.map((v) => v.verse), [1, 32, 33, 34]);
+  assert.equal(
+    d.verses.find((v) => v.verse === 33).text,
+    '“Persistam, então, em buscar primeiro o Reino e a justiça de Deus, e todas essas outras coisas lhes serão acrescentadas.'
+  );
+  assert.match(d.verses[0].text, /^“Tomem cuidado/); // chapter number removed
+  assert.deepEqual(sliceByVerse(d.cross_references, 33, 33), { 33: ['Salmo 37:25', 'Malaquias 3:10', 'João 6:27', 'Hebreus 13:5'] });
+  assert.equal(sliceByVerse(d.study_notes, 33, 33)[33].length, 3);
+  assert.match(sliceByVerse(d.study_notes, 33, 33)[33][0], /^Persistam \. \. \. em buscar:/);
+  assert.deepEqual(sliceByVerse(d.footnotes, 13, 13), { 13: ['Ou: “salva-nos”.'] });
+  assert.deepEqual(d.outline.slice(0, 2), ['D. Sermão do Monte (5:1–7:29)', 'Jesus começa o Sermão do Monte']);
+
+  const media = itemsTouching(d.media, 1, 34);
+  assert.equal(media.length, 1);
+  assert.equal(media[0].title, 'Sinagoga do século 1 d.C.');
+  assert.equal(media[0].verses, '2');
+  assert.equal(itemsTouching(d.media, 33, 33).length, 0);
+
+  const clips = itemsTouching(d.video_clips, 3, 3);
+  assert.equal(clips.length, 1);
+  assert.equal(clips[0].video_id, 'pub-gnj_5_VIDEO');
+  assert.equal(clips[0].start, '00:14:54.39');
+  assert.equal(clips[0].end, '00:15:58.83');
+  assert.equal(clips[0].verses, '1-4');
+  assert.match(clips[0].title, /^Não pratiquem a justiça só para chamar atenção/);
+
+  assert.equal(chapterDataUrl(40, 6, 'pt'), 'https://www.jw.org/pt/biblioteca/biblia/biblia-de-estudo/livros/json/data/40006000-40006999');
+  assert.equal(chapterDataUrl(1, 1, 'en'), 'https://www.jw.org/en/library/bible/study-bible/books/json/data/1001000-1001999');
+});
+
+test('study-Bible JSON: poetry keeps lines and superscription', () => {
+  const d = parseBibleChapterJson(JSON.parse(fixture('bible-json-ps23-pt.json')), 19, 23);
+  assert.equal(d.superscription, 'Salmo de Davi.');
+  assert.equal(d.verses[0].text, 'Jeová é o meu Pastor.\nNada me faltará.');
+  assert.equal(d.verses[1].text, 'Ele me faz deitar em verdes pastagens\nE me conduz a lugares de descanso bem regados.');
+  assert.equal(verseHtmlToText('<span class="style-b"><sup class="verseNum">5 </sup> Texto.<xref id="1"></xref></span>'), 'Texto.');
+});
+
+// ---------------------------------------------------------------------------
+test('paragraph references (§)', () => {
+  assert.deepEqual([...parseParagraphRefs('w24.12 23 §§ 13-14')], [13, 14]);
+  assert.deepEqual([...parseParagraphRefs('jr 189 § 16')], [16]);
+  assert.equal(parseParagraphRefs('lmd lição 2 ponto 3'), null);
+  const doc = parseArticleBlocks(fixture('reference-w16-07-pt.html'), { readWords: pt.read });
+  const sel = selectParagraphs(doc, { paragraphs: parseParagraphRefs('w16.07 12 §§ 18-19'), pages: 'w16.07 12 §§ 18-19' });
+  assert.equal(sel.matchedBy, 'paragraphs');
+  assert.deepEqual(sel.paragraphs.map((p) => p.number), [18, 19]);
+});
+
+test('daily text', () => {
+  const dt = parseDailyText(fixture('daily-text-pt.html'), { readWords: pt.read });
+  assert.equal(dt.date_heading, 'Quarta-feira, 14 de outubro');
+  assert.equal(dt.publication, 'Examine as Escrituras Diariamente — 2026');
+  assert.match(dt.theme_scripture, /^Jeová está perto dos que têm coração quebrantado/);
+  assert.equal(dt.theme_reference, 'Salmos 34:18');
+  assert.match(dt.comment, /^Você está se sentindo abalado/);
+  assert.ok(!dt.comment.includes('w24.12'));
+  assert.deepEqual(dt.scriptures_cited, ['Isaías 65:17']);
+  assert.deepEqual(dt.sources, [{ label: 'w24.12 23 §§ 13-14', url: 'https://wol.jw.org/pt/wol/pc/r5/lp-t/1102026209/13/0' }]);
+});
+
+test('songbook', () => {
+  const index = parseSongbookIndex(fixture('songbook-index-pt.html'));
+  assert.equal(index['33'], 'https://wol.jw.org/pt/wol/d/r5/lp-t/1102016833');
+  assert.equal(index['163'], 'https://wol.jw.org/pt/wol/d/r5/lp-t/1102022963');
+  assert.equal(Object.keys(index).length, 4);
+
+  const song = parseSong(fixture('song-33-pt.html'));
+  assert.equal(song.number, 33);
+  assert.equal(song.title, 'Deixe Jeová levar seus fardos');
+  assert.equal(song.based_on, 'Salmo 55');
+  assert.equal(song.stanzas.length, 2);
+  assert.deepEqual(song.stanzas[0], ['Ouve a minha oração, Pai.', 'Presta atenção em mim.', 'Alivia essa angústia', 'Que parece não ter fim.']);
+  assert.deepEqual(song.chorus, ['Deixe Deus levar seus fardos;', 'Ele está sempre ao seu lado.', 'Quem confia em Jeová', 'Jamais sozinho ficará.']);
+  assert.equal(song.see_also, 'Veja também Sal. 22:5; 31:1-24.');
 });

@@ -23,7 +23,7 @@ const fail = (msg) => ({ content: [{ type: 'text', text: msg }], isError: true }
 
 const TZ = process.env.JW_MCP_TIMEZONE || 'America/Fortaleza';
 
-function todayInTz() {
+export function todayInTz() {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   return parts; // YYYY-MM-DD
 }
@@ -55,6 +55,7 @@ export const getReferenceTool = {
       chapter: { type: 'number', description: 'Capítulo. Alternativa a "reference".' },
       verse: { type: 'number', description: 'Versículo. Alternativa a "reference".' },
       pages: { type: 'string', description: 'Páginas a extrair se não houver versículo, ex.: "pp. 14-15" ou "12". Pode ser o próprio título da referência.' },
+      label: { type: 'string', description: 'O rótulo da referência como aparece na matéria, ex.: "w24.12 23 §§ 13-14", "jr 189 § 16", "cl 72-73 §§ 13-14". Os parágrafos (§) e páginas são lidos daqui.' },
       context: { type: 'number', description: 'Parágrafos de contexto antes/depois de cada trecho encontrado (padrão 1).', default: 1 },
       max_paragraphs: { type: 'number', description: 'Máximo de parágrafos devolvidos (padrão 8).', default: 8 },
       lang: LANG_SCHEMA,
@@ -92,7 +93,22 @@ export function citesTarget(c, target) {
 }
 
 /** Pick the paragraphs of a parsed document that matter for a target verse or page range. */
-export function selectParagraphs(doc, { target = null, pages = null, context = 1, maxParagraphs = 8 } = {}) {
+/** "§§ 13-14" / "§ 16" -> Set of paragraph numbers. */
+export function parseParagraphRefs(str) {
+  const m = String(str || '').match(/§§?\s*([\d\s,-]+)/);
+  if (!m) return null;
+  const set = new Set();
+  for (const part of m[1].split(',')) {
+    const r = part.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+    if (!r) continue;
+    const a = Number(r[1]);
+    const b = r[2] ? Number(r[2]) : a;
+    for (let n = Math.min(a, b); n <= Math.max(a, b) && set.size < 60; n++) set.add(n);
+  }
+  return set.size ? set : null;
+}
+
+export function selectParagraphs(doc, { target = null, pages = null, paragraphs: paragraphRefs = null, context = 1, maxParagraphs = 8 } = {}) {
   const textBlocks = doc.blocks.filter((b) => ['paragraph', 'question', 'theme', 'box'].includes(b.type));
   const questions = new Map(doc.blocks.filter((b) => b.type === 'question').map((b) => [b.pid, b.text]));
   const hits = (b) => (b.scriptures || []).some((s) => citesTarget(s._parsed, target));
@@ -108,8 +124,18 @@ export function selectParagraphs(doc, { target = null, pages = null, context = 1
     if (picked.size) matchedBy = 'verse';
   }
 
+  if (!picked.size && paragraphRefs) {
+    const set = paragraphRefs instanceof Set ? paragraphRefs : parseParagraphRefs(paragraphRefs);
+    if (set) {
+      textBlocks.forEach((b, i) => {
+        if (b.par_num != null && set.has(b.par_num)) picked.add(i);
+      });
+      if (picked.size) matchedBy = 'paragraphs';
+    }
+  }
+
   if (!picked.size && pages) {
-    const set = parsePages(pages);
+    const set = parsePages(String(pages).replace(/§§?\s*[\d\s,-]+/, ''));
     if (set) {
       textBlocks.forEach((b, i) => {
         if (b.page != null && set.has(b.page)) picked.add(i);
@@ -172,7 +198,14 @@ export async function getReferenceImplementation(args = {}) {
 
     const { html, finalUrl } = await fetchWolHtml(url, loc);
     const doc = parseArticleBlocks(html, { readWords: loc.read });
-    const { matchedBy, paragraphs, total } = selectParagraphs(doc, { target, pages: args.pages, context, maxParagraphs });
+    const label = args.label || args.pages || null;
+    const { matchedBy, paragraphs, total } = selectParagraphs(doc, {
+      target,
+      paragraphs: label ? parseParagraphRefs(label) : null,
+      pages: label,
+      context,
+      maxParagraphs,
+    });
 
     return ok({
       title: doc.title,
@@ -288,6 +321,9 @@ export async function getMeetingWeekImplementation(args = {}) {
         out.watchtower = { url: links.watchtower.url, ...parseWatchtowerStudy(wt, { readWords: loc.read }) };
       } else out.watchtower = null;
     }
+    const songNumbers = (list) => [...new Set((list || []).map((t) => Number((String(t).match(/\d+/) || [])[0])).filter(Boolean))];
+    if (out.workbook) out.workbook.song_numbers = songNumbers(out.workbook.songs);
+    if (out.watchtower) out.watchtower.song_numbers = songNumbers(out.watchtower.songs);
     if (!links.workbook && !links.watchtower) {
       out.note = 'Nenhuma matéria encontrada para essa semana (pode ser semana de congresso/assembleia ou ainda não publicada).';
     }

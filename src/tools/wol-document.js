@@ -370,9 +370,12 @@ export function parseMeetingsPage(html) {
       url: absUrl($(a).attr('href')),
     };
     if (/\bpub-mwb\b/.test(cls) && !out.workbook) out.workbook = entry;
-    else if (/\bpub-w\b/.test(cls) && !out.watchtower) out.watchtower = entry;
-    else out.other.push(entry);
+    else if (/\bpub-w\b/.test(cls) && (!out.watchtower || (/\bdocClass-40\b/.test(cls) && !out._wtIsStudy))) {
+      out.watchtower = entry;
+      out._wtIsStudy = /\bdocClass-40\b/.test(cls);
+    } else out.other.push(entry);
   });
+  delete out._wtIsStudy;
   return out;
 }
 
@@ -406,4 +409,93 @@ export function parseSearchResults(html) {
     });
   });
   return results;
+}
+
+// ---------------------------------------------------------------------------
+// Daily text (/wol/dt/.../YYYY/M/D)
+// ---------------------------------------------------------------------------
+
+export function parseDailyText(html, opts = {}) {
+  const $ = cheerio.load(html);
+  const item =
+    $('.todayItem')
+      .filter((_, el) => /\bpub-es\b/.test($(el).attr('class') || ''))
+      .first() || null;
+  if (!item || !item.length) return null;
+
+  const data = item.find('.itemData').first();
+  const theme = data.find('p.themeScrp').first();
+  const body = data.find('.bodyTxt p').toArray();
+  const sources = [];
+  const scriptures = [];
+  const paragraphs = body.map((p) => {
+    $(p)
+      .find('a[href*="/wol/pc/"]')
+      .each((_, a) => sources.push({ label: clean($(a).text()), url: absUrl($(a).attr('href')) }));
+    scriptures.push(...extractScriptures($, p, opts));
+    const c = $(p).clone();
+    c.find('a[href*="/wol/pc/"]').remove();
+    return clean(c.text());
+  });
+
+  const card = item.find('.cardLine2').first();
+  return {
+    date_heading: clean(data.find('h2').first().text()) || null,
+    publication: clean(card.text()) || null,
+    theme_scripture: clean(theme.text()) || null,
+    theme_reference: extractScriptures($, theme, opts).map((s) => s.reference || s.text)[0] || null,
+    comment: paragraphs.filter(Boolean).join('\n\n'),
+    scriptures_cited: publicScriptures(scriptures).map((s) => s.reference || s.text),
+    sources,
+    url: absUrl(item.find('.itemCaption a').first().attr('href')?.split('?')[0]) || null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Songbook ("Cante de Coração", sjj)
+// ---------------------------------------------------------------------------
+
+/** Map song number -> document URL from the songbook publication page. */
+export function parseSongbookIndex(html) {
+  const $ = cheerio.load(html);
+  const map = {};
+  $('a[href*="/wol/d/"]').each((_, a) => {
+    const t = clean($(a).text());
+    if (/^\d{1,3}$/.test(t) && !map[t]) map[t] = absUrl($(a).attr('href'));
+  });
+  return map;
+}
+
+export function parseSong(html) {
+  const $ = cheerio.load(html);
+  const art = $('article').first();
+  const tidy = (s) => clean(String(s).replace(/⁀/g, ' '));
+  const numberText = tidy(art.find('header .contextTtl, p.contextTtl').first().text());
+  const number = Number((numberText.match(/\d+/) || [])[0]) || null;
+  const title = tidy(art.find('header h1, h1').first().text()) || null;
+  const theme = tidy(art.find('p.themeScrp').first().text()).replace(/^\(|\)$/g, '') || null;
+
+  let chorus = null;
+  const stanzas = [];
+  art.find('ol.source > li, .bodyTxt ol > li').each((_, li) => {
+    const lines = [];
+    $(li)
+      .children('p')
+      .each((__, p) => {
+        const c = $(p).clone();
+        c.find('.txtSrcBullet').remove();
+        const t = tidy(c.text());
+        if (t) lines.push(t);
+      });
+    const ch = $(li)
+      .find('.chorus p')
+      .toArray()
+      .map((p) => tidy($(p).text()))
+      .filter((t) => t && !/^\((refr[aã]o|chorus|coro)\)$/i.test(t));
+    if (ch.length && !chorus) chorus = ch;
+    stanzas.push(lines);
+  });
+
+  const seeAlso = tidy(art.find('.closingContent').text()).replace(/^\(|\)$/g, '') || null;
+  return { number, title, based_on: theme, stanzas, chorus, see_also: seeAlso };
 }

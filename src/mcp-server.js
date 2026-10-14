@@ -4,9 +4,9 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { captionsTool, handleCaptionsTool } from './tools/captions-tool.js';
-import { workbookTools, handleWorkbookTools } from './tools/workbook-tools.js';
-import { watchtowerTools, handleWatchtowerTools } from './tools/watchtower-tools.js';
+import { captionsTool, listVideosTool, handleCaptionsTool } from './tools/captions-tool.js';
+import { dailyTools, handleDailyTools } from './tools/daily-tools.js';
+import { SERVER_INSTRUCTIONS } from './instructions.js';
 import { studyTools, handleStudyTools } from './tools/study-tools.js';
 import {
   searchBibleBooksTool,
@@ -20,9 +20,9 @@ const { version: SERVER_VERSION } = createRequire(import.meta.url)('../package.j
 
 const allTools = [
   ...studyTools,
+  ...dailyTools,
   captionsTool,
-  ...workbookTools,
-  ...watchtowerTools,
+  listVideosTool,
   searchBibleBooksTool,
   getBibleVerseTool,
   getVerseWithStudyTool,
@@ -31,16 +31,15 @@ const allTools = [
 
 const toolHandlers = [
   handleStudyTools,
+  handleDailyTools,
   handleCaptionsTool,
-  handleWorkbookTools,
-  handleWatchtowerTools,
   handleScriptureTools,
 ];
 
 export function createMcpServer(requestId = 'default') {
   const server = new Server(
     { name: 'jw-mcp', version: SERVER_VERSION },
-    { capabilities: { tools: {} } }
+    { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {

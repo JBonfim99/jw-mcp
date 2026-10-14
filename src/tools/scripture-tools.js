@@ -5,7 +5,8 @@
 
 import { scraper } from './wol-scraper.js';
 import { getLocale, LANG_SCHEMA } from './locale.js';
-import { bookNamePt } from './scripture-refs.js';
+import { bookNamePt, parseCitation } from './scripture-refs.js';
+import { fetchBibleChapter, sliceByVerse, itemsTouching } from './bible-json.js';
 import {
   searchBooks,
   getBookName,
@@ -93,75 +94,108 @@ export async function searchBibleBooksImplementation(query, limit = 10) {
 }
 
 // ============================================================================
+// Shared: resolve book/chapter/verse or a "reference" string
+// ============================================================================
+
+const REFERENCE_SCHEMA = {
+  type: 'string',
+  description: 'Alternativa a book/chapter/verse: "Mateus 6:33", "Mat. 6:31-34", "Sal. 23" (capítulo inteiro), "1 Tim. 6:6-8".'
+};
+
+function resolveReference(args = {}) {
+  if (args.reference) {
+    const c = parseCitation(String(args.reference));
+    if (!c) throw new Error(`Não entendi a referência "${args.reference}". Exemplos: "Mateus 6:33", "Sal. 23:1-4".`);
+    if (c.ranges) {
+      const a = Math.min(...c.ranges.map((r) => r[0]));
+      const b = Math.max(...c.ranges.map((r) => r[1]));
+      return { book: c.book, chapter: c.chapter, verseStart: a, verseEnd: b };
+    }
+    return { book: c.book, chapter: c.chapter, verseStart: 1, verseEnd: 999 };
+  }
+  const book = Number(args.book);
+  const chapter = Number(args.chapter);
+  if (!book || !chapter) throw new Error('Informe "reference" ou book + chapter (+ verse).');
+  const v = args.verse == null || args.verse === '' ? null : String(args.verse);
+  if (!v) return { book, chapter, verseStart: 1, verseEnd: 999 };
+  const m = v.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+  if (!m) throw new Error(`Versículo inválido: "${v}". Use "14" ou "14-16".`);
+  return { book, chapter, verseStart: Number(m[1]), verseEnd: Number(m[2] || m[1]) };
+}
+
+function displayRef(book, chapter, a, b, lang) {
+  const name = getLocale(lang).code === 'pt' ? bookNamePt(book) : getBookName(book);
+  if (a === 1 && b >= 999) return `${name} ${chapter}`;
+  return `${name} ${chapter}:${a === b ? a : `${a}-${b}`}`;
+}
+
+/** Verse text: study-Bible JSON first, WOL page as fallback. */
+async function loadVerses(book, chapter, lang, fresh) {
+  try {
+    const data = await fetchBibleChapter(book, chapter, lang, { fresh });
+    return { source: 'jw.org study Bible', data };
+  } catch (error) {
+    console.error(`[bible-json] ${book}:${chapter} falhou (${error.message}); usando wol.jw.org`);
+    const wol = await scraper.extractChapterContent(book, chapter, lang, { fresh });
+    const toMap = (key) => new Map(Object.entries(wol.sections).map(([v, s]) => [Number(v), s[key] || []]));
+    return {
+      source: 'wol.jw.org',
+      data: {
+        url: wol.url,
+        verses: wol.verses.map((v) => ({ verse: v.verse_num, text: v.verse_text })),
+        superscription: null,
+        footnotes: new Map(),
+        cross_references: toMap('cross_references'),
+        study_notes: toMap('study_notes'),
+        outline: wol.outline,
+        media: [],
+        video_clips: [],
+      },
+    };
+  }
+}
+
+// ============================================================================
 // Tool 2: get_bible_verse
 // ============================================================================
 
 export const getBibleVerseTool = {
   name: 'get_bible_verse',
-  description: 'Get plain Bible verse text from wol.jw.org. Returns just the verse text without study notes or additional content. For comprehensive study content including notes and cross-references, use get_verse_with_study instead.',
+  description: 'Texto bíblico (Tradução do Novo Mundo, edição de estudo) de um versículo, trecho ou capítulo inteiro, no idioma escolhido (padrão português). Salmos e poesia vêm linha por linha. Para notas de estudo, referências e pesquisa, use get_verse_with_study.',
   inputSchema: {
     type: 'object',
     properties: {
-      book: {
-        type: 'number',
-        description: 'Bible book number (1-66). Examples: Genesis=1, Matthew=40, John=43, Revelation=66. Use search_bible_books to find book numbers.'
-      },
-      chapter: {
-        type: 'number',
-        description: 'Chapter number within the book'
-      },
-      verse: {
-        type: 'number',
-        description: 'Verse number within the chapter'
-      },
+      reference: REFERENCE_SCHEMA,
+      book: { type: 'number', description: 'Número do livro (1-66). Use search_bible_books se precisar.' },
+      chapter: { type: 'number', description: 'Capítulo' },
+      verse: { type: 'string', description: 'Versículo ("14") ou trecho ("14-16"). Omitido = capítulo inteiro.' },
       lang: LANG_SCHEMA
-    },
-    required: ['book', 'chapter', 'verse']
+    }
   }
 };
 
-export async function getBibleVerseImplementation(book, chapter, verse, lang) {
+export async function getBibleVerseImplementation(args = {}) {
   try {
-    // Validate inputs
-    const validation = validateReference(book, chapter, verse);
-    if (!validation.valid) {
-      return {
-        content: [{
-          type: 'text',
-          text: `Validation error: ${validation.error}`
-        }],
-        isError: true
-      };
-    }
+    const { book, chapter, verseStart, verseEnd } = resolveReference(args);
+    const validation = validateReference(book, chapter, verseStart);
+    if (!validation.valid) return { content: [{ type: 'text', text: `Validation error: ${validation.error}` }], isError: true };
 
-    // Fetch verse
-    const verseData = await scraper.getSingleVerse(book, chapter, verse, lang);
+    const { data, source } = await loadVerses(book, chapter, args.lang, false);
+    const verses = data.verses.filter((v) => v.verse >= verseStart && v.verse <= verseEnd);
+    if (!verses.length) return { content: [{ type: 'text', text: `Versículo não encontrado: ${displayRef(book, chapter, verseStart, verseEnd, args.lang)}` }], isError: true };
 
-    // Format reference
-    const reference = getLocale(lang).code === 'pt' ? `${bookNamePt(book)} ${chapter}:${verse}` : formatReference(book, chapter, verse);
-
-    return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify({
-          reference: reference,
-          book_number: verseData.book_num,
-          book_name: verseData.book_name,
-          chapter: verseData.chapter,
-          verse: verseData.verse_num,
-          text: verseData.verse_text
-        }, null, 2)
-      }]
+    const result = {
+      reference: displayRef(book, chapter, verseStart, Math.min(verseEnd, verses[verses.length - 1].verse), args.lang),
+      book_number: book,
+      chapter,
+      source,
+      verses
     };
-
+    if (verseStart <= 1 && data.superscription) result.superscription = data.superscription;
+    if (verses.length === 1) result.text = verses[0].text;
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   } catch (error) {
-    return {
-      content: [{
-        type: 'text',
-        text: `Error fetching verse: ${error.message}`
-      }],
-      isError: true
-    };
+    return { content: [{ type: 'text', text: `Erro ao buscar o versículo: ${error.message}` }], isError: true };
   }
 }
 
@@ -169,148 +203,113 @@ export async function getBibleVerseImplementation(book, chapter, verse, lang) {
 // Tool 3: get_verse_with_study
 // ============================================================================
 
+const STUDY_FIELDS = ['verses', 'study_notes', 'study_articles', 'publication_index', 'cross_references', 'footnotes', 'media', 'video_clips', 'chapter_level', 'combined_text'];
+const DEFAULT_STUDY_FIELDS = ['verses', 'study_notes', 'study_articles', 'cross_references', 'footnotes', 'media', 'video_clips'];
+
 export const getVerseWithStudyTool = {
   name: 'get_verse_with_study',
-  description: 'Versículo(s) da Bíblia de Estudo (TNM) com conteúdo de pesquisa da Biblioteca On-line, no idioma escolhido (padrão português): texto, notas de estudo, referências cruzadas, TODAS as referências do Guia de Pesquisa (study_articles, com ano — as mais recentes vêm primeiro) e, se pedido, o Índice das Publicações (publication_index, mais completo, inclui publicações antigas). Abra qualquer referência com get_reference passando o versículo para receber só os parágrafos que o explicam. Atenção a datas: prefira publicações recentes, pois o entendimento de alguns textos foi ajustado ao longo do tempo.',
+  description: 'Pesquisa completa de um versículo/trecho da Bíblia de Estudo (TNM), no idioma escolhido (padrão português): texto, notas de estudo, notas de rodapé, referências cruzadas, mídia da Bíblia de estudo (imagens com legenda), trechos de vídeo que explicam o texto (video_clips com video_id e minutagem — abra com get_jw_captions passando start/end), TODAS as referências do Guia de Pesquisa (study_articles, com ano; as mais recentes vêm primeiro) e, se pedido, o Índice das Publicações (publication_index, inclui publicações antigas). Abra uma referência com get_reference passando o versículo para receber só os parágrafos que o explicam. Prefira publicações recentes: o entendimento de alguns textos foi ajustado ao longo do tempo.',
   inputSchema: {
     type: 'object',
     properties: {
-      book: {
-        type: 'number',
-        description: 'Bible book number (1-66). Use search_bible_books to find book numbers.'
-      },
-      chapter: {
-        type: 'number',
-        description: 'Chapter number within the book'
-      },
-      verse: {
-        type: 'string',
-        description: 'Single verse number (e.g., "14") or verse range (e.g., "14-16")'
-      },
+      reference: REFERENCE_SCHEMA,
+      book: { type: 'number', description: 'Número do livro (1-66).' },
+      chapter: { type: 'number', description: 'Capítulo' },
+      verse: { type: 'string', description: 'Versículo ("14") ou trecho ("14-16").' },
       fields: {
         type: 'array',
-        items: {
-          type: 'string',
-          enum: ['verses', 'study_notes', 'study_articles', 'publication_index', 'cross_references', 'chapter_level', 'combined_text']
-        },
-        description: 'Campos: "verses", "study_notes", "study_articles" (Guia de Pesquisa), "publication_index" (Índice das Publicações), "cross_references", "chapter_level" (esboço do capítulo), "combined_text". Padrão: ["verses", "study_notes", "study_articles", "cross_references"]',
-        default: ['verses', 'study_notes', 'study_articles', 'cross_references']
+        items: { type: 'string', enum: STUDY_FIELDS },
+        description: `Campos. Padrão: ${JSON.stringify(DEFAULT_STUDY_FIELDS)}. Extras: "publication_index", "chapter_level" (esboço do capítulo), "combined_text".`,
+        default: DEFAULT_STUDY_FIELDS
       },
-      limit: {
-        type: 'number',
-        description: 'Máximo de referências em study_articles e publication_index (padrão: sem limite).'
-      },
-      lang: LANG_SCHEMA,
-      fetch: {
-        type: 'boolean',
-        description: 'Force fresh data from wol.jw.org (useful when content appears to be missing). Default: false',
-        default: false
-      }
-    },
-    required: ['book', 'chapter', 'verse']
+      limit: { type: 'number', description: 'Máximo de referências em study_articles e publication_index (padrão: sem limite).' },
+      fetch: { type: 'boolean', description: 'Ignorar o cache e buscar de novo.', default: false },
+      lang: LANG_SCHEMA
+    }
   }
 };
 
-export async function getVerseWithStudyImplementation(book, chapter, verse, fields = ['verses', 'study_notes', 'study_articles', 'cross_references'], limit = null, fetch = false, lang) {
+export async function getVerseWithStudyImplementation(args = {}) {
   try {
-    // Validate inputs
-    const validation = validateReference(book, chapter, verse);
-    if (!validation.valid) {
-      return {
-        content: [{
-          type: 'text',
-          text: `Validation error: ${validation.error}`
-        }],
-        isError: true
-      };
+    const { book, chapter, verseStart, verseEnd } = resolveReference(args);
+    const validation = validateReference(book, chapter, verseStart);
+    if (!validation.valid) return { content: [{ type: 'text', text: `Validation error: ${validation.error}` }], isError: true };
+
+    const fields = Array.isArray(args.fields) && args.fields.length ? args.fields : DEFAULT_STUDY_FIELDS;
+    const invalid = fields.filter((f) => !STUDY_FIELDS.includes(f));
+    if (invalid.length) {
+      return { content: [{ type: 'text', text: `Campos inválidos: ${invalid.join(', ')}. Válidos: ${STUDY_FIELDS.join(', ')}` }], isError: true };
     }
+    const fresh = Boolean(args.fetch);
+    const limit = args.limit ? Number(args.limit) : null;
+    const needWol = fields.includes('study_articles') || fields.includes('publication_index');
 
-    // Validate fields
-    const validFields = ['verses', 'study_notes', 'study_articles', 'publication_index', 'cross_references', 'chapter_level', 'combined_text'];
-    const invalidFields = fields.filter(f => !validFields.includes(f));
-    if (invalidFields.length > 0) {
-      return {
-        content: [{
-          type: 'text',
-          text: `Invalid fields: ${invalidFields.join(', ')}. Valid fields are: ${validFields.join(', ')}`
-        }],
-        isError: true
-      };
-    }
+    const [bible, wol] = await Promise.all([
+      loadVerses(book, chapter, args.lang, fresh),
+      needWol
+        ? scraper
+            .getVerseWithStudy(book, chapter, `${verseStart}-${Math.min(verseEnd, 200)}`, {
+              fields: fields.filter((f) => f === 'study_articles' || f === 'publication_index'),
+              limit,
+              lang: args.lang,
+              fresh
+            })
+            .catch((e) => ({ error: e.message }))
+        : Promise.resolve(null)
+    ]);
+    const { data, source } = bible;
+    const verses = data.verses.filter((v) => v.verse >= verseStart && v.verse <= verseEnd);
+    const lastVerse = verses.length ? verses[verses.length - 1].verse : verseStart;
 
-    // Fetch verse with study content
-    const studyData = await scraper.getVerseWithStudy(book, chapter, String(verse), {
-      fields: fields,
-      limit: limit,
-      lang,
-      fresh: fetch
-    });
-
-    // Format reference
-    const reference = studyData.lang === 'pt'
-      ? `${studyData.book_name} ${chapter}:${studyData.verse_range}`
-      : formatReference(book, chapter, studyData.verse_range);
-
-    // Build response
     const response = {
-      reference: reference,
-      lang: studyData.lang,
-      book_number: studyData.book_num,
-      book_name: studyData.book_name,
-      chapter: studyData.chapter,
-      verse_range: studyData.verse_range,
-      source_url: studyData.source_url
+      reference: displayRef(book, chapter, verseStart, Math.min(verseEnd, lastVerse), args.lang),
+      lang: getLocale(args.lang).code,
+      book_number: book,
+      chapter,
+      verse_range: verseStart === lastVerse ? `${verseStart}` : `${verseStart}-${lastVerse}`,
+      text_source: source,
+      jw_org_link: data.link || null
     };
 
-    // Add requested fields
-    if (studyData.verses) {
-      response.verses = studyData.verses;
+    if (fields.includes('verses')) {
+      response.verses = verses;
+      if (verseStart <= 1 && data.superscription) response.superscription = data.superscription;
+    }
+    if (fields.includes('combined_text')) response.combined_text = verses.map((v) => `${v.verse}. ${v.text}`).join(' ');
+    if (fields.includes('study_notes')) response.study_notes = sliceByVerse(data.study_notes, verseStart, verseEnd);
+    if (fields.includes('footnotes')) {
+      const fn = sliceByVerse(data.footnotes, verseStart, verseEnd);
+      if (Object.keys(fn).length) response.footnotes = fn;
+    }
+    if (fields.includes('cross_references')) response.cross_references = sliceByVerse(data.cross_references, verseStart, verseEnd);
+    if (fields.includes('media')) {
+      const media = itemsTouching(data.media, verseStart, verseEnd);
+      if (media.length) response.media = media;
+    }
+    if (fields.includes('video_clips')) {
+      const clips = itemsTouching(data.video_clips, verseStart, verseEnd);
+      if (clips.length) response.video_clips = clips;
+    }
+    if (fields.includes('chapter_level')) response.chapter_level = { outline: data.outline };
+
+    if (wol?.error) response.research_error = `Guia de Pesquisa indisponível agora: ${wol.error}`;
+    else if (wol) {
+      if (wol.study_articles) {
+        response.study_articles = wol.study_articles;
+        response.study_articles_count = wol.study_articles.length;
+        response.study_articles_total = wol.study_articles_total;
+      }
+      if (wol.publication_index) {
+        response.publication_index = wol.publication_index;
+        response.publication_index_total = wol.publication_index_total;
+        if (wol.publication_index_unlinked) response.publication_index_unlinked = wol.publication_index_unlinked;
+      }
+      response.research_source_url = wol.source_url;
     }
 
-    if (studyData.combined_text) {
-      response.combined_text = studyData.combined_text;
-    }
-
-    if (studyData.study_notes) {
-      response.study_notes = studyData.study_notes;
-      response.study_notes_count = Object.keys(studyData.study_notes).length;
-    }
-
-    if (studyData.study_articles) {
-      response.study_articles = studyData.study_articles;
-      response.study_articles_count = studyData.study_articles.length;
-      response.study_articles_total = studyData.study_articles_total;
-    }
-
-    if (studyData.publication_index) {
-      response.publication_index = studyData.publication_index;
-      response.publication_index_total = studyData.publication_index_total;
-      if (studyData.publication_index_unlinked) response.publication_index_unlinked = studyData.publication_index_unlinked;
-    }
-
-    if (studyData.cross_references) {
-      response.cross_references = studyData.cross_references;
-    }
-
-    if (studyData.chapter_level) {
-      response.chapter_level = studyData.chapter_level;
-    }
-
-    return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify(response, null, 2)
-      }]
-    };
-
+    return { content: [{ type: 'text', text: JSON.stringify(response, null, 2) }] };
   } catch (error) {
-    return {
-      content: [{
-        type: 'text',
-        text: `Error fetching verse with study content: ${error.message}`
-      }],
-      isError: true
-    };
+    return { content: [{ type: 'text', text: `Erro ao buscar o conteúdo de estudo: ${error.message}` }], isError: true };
   }
 }
 
@@ -442,18 +441,10 @@ export async function handleScriptureTools(request) {
       return await searchBibleBooksImplementation(args.query, args.limit);
 
     case 'get_bible_verse':
-      return await getBibleVerseImplementation(args.book, args.chapter, args.verse, args.lang);
+      return await getBibleVerseImplementation(args);
 
     case 'get_verse_with_study':
-      return await getVerseWithStudyImplementation(
-        args.book,
-        args.chapter,
-        args.verse,
-        args.fields,
-        args.limit,
-        args.fetch,
-        args.lang
-      );
+      return await getVerseWithStudyImplementation(args);
 
     case 'get_bible_verse_url':
       return await getBibleVerseURLImplementation(args.book, args.chapter, args.verse, args.lang);
