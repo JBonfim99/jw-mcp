@@ -4,9 +4,7 @@
 #   1. DNS: registro A de jwmcp.juanbonfim.com.br apontando para o IP do servidor.
 #   2. No Portainer, em Environment variables do stack, defina:
 #        MCP_AUTH_SECRET = (gere com: openssl rand -hex 32)
-#   3. Confira os 3 nomes abaixo marcados com AJUSTE para baterem com o seu Traefik
-#      (rede externa, entrypoint HTTPS e certresolver).
-#   4. Se a imagem no GHCR estiver privada, cadastre o registry ghcr.io no Portainer
+#   3. Se a imagem no GHCR estiver privada, cadastre o registry ghcr.io no Portainer
 #      (usuário JBonfim99 + token com escopo read:packages).
 #
 # Depois: no claude.ai > Configurações > Conectores > Adicionar conector personalizado
@@ -31,7 +29,7 @@ services:
     volumes:
       - jw_mcp_data:/data
     networks:
-      - network_public # AJUSTE: rede externa do Traefik
+      - juanbonfim
     deploy:
       mode: replicated
       replicas: 1 # o login fica em /data/auth.json: uma réplica só
@@ -46,10 +44,11 @@ services:
         condition: any
       labels:
         - traefik.enable=true
+        - traefik.docker.network=juanbonfim
         - traefik.http.routers.jwmcp.rule=Host(`jwmcp.juanbonfim.com.br`)
-        - traefik.http.routers.jwmcp.entrypoints=websecure # AJUSTE
+        - traefik.http.routers.jwmcp.entrypoints=websecure
         - traefik.http.routers.jwmcp.tls=true
-        - traefik.http.routers.jwmcp.tls.certresolver=letsencryptresolver # AJUSTE
+        - traefik.http.routers.jwmcp.tls.certresolver=letsencrypt
         - traefik.http.routers.jwmcp.service=jwmcp
         - traefik.http.services.jwmcp.loadbalancer.server.port=8080
         - traefik.http.services.jwmcp.loadbalancer.passHostHeader=true
@@ -59,5 +58,5 @@ volumes:
     external: false
 
 networks:
-  network_public: # AJUSTE: mesmo nome da rede acima
+  juanbonfim:
     external: true
