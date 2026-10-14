@@ -1,3 +1,29 @@
+# jw-mcp-pt (fork pessoal)
+
+Fork de uso pessoal do [advenimus/jw-mcp](https://github.com/advenimus/jw-mcp), focado em **preparar as reuniões em português** com ajuda da IA. Não é distribuído nem publicado em registro de pacotes.
+
+## O que muda em relação ao original
+
+| Ferramenta | O que faz |
+|---|---|
+| `get_meeting_week` | Semana de reuniões estruturada (padrão: semana atual): apostila Vida e Ministério por partes (minutos, perguntas, referências, textos, vídeos) e estudo de A Sentinela com cada pergunta junto dos seus parágrafos, textos de leitura marcados, imagens descritas e quadro de recapitulação. |
+| `get_verse_with_study` | Em português. Traz **todas** as referências do Guia de Pesquisa (com ano), o Índice das Publicações (`publication_index`), notas de estudo e referências cruzadas. |
+| `get_reference` | Abre uma referência e devolve só os parágrafos que citam o versículo (ou as páginas pedidas), com a pergunta de estudo e a seção. |
+| `search_library` | Busca de texto na Biblioteca On-line inteira, com filtro por coleção e ordenação por data. |
+| `get_jw_captions` | Legenda do vídeo no idioma escolhido, como texto corrido (ou VTT). |
+| todas | Parâmetro `lang` (`pt` padrão, `en`, `es`). Cache em memória de 6 h para não sobrecarregar o site. |
+
+Variáveis extras: `JW_DEFAULT_LANG` (padrão `pt`), `JW_MCP_TIMEZONE` (padrão `America/Fortaleza`), `JW_MCP_CACHE_TTL_MS`.
+
+## Deploy (Portainer + Traefik)
+
+1. Cada push na `main` roda os testes e publica `ghcr.io/jbonfim99/jw-mcp:latest` (workflow `CI`).
+2. Suba o stack `deploy/portainer-stack.yml` no Portainer (instruções no próprio arquivo).
+3. Opcional: crie um webhook do serviço no Portainer e salve como secret `PORTAINER_WEBHOOK_URL` no GitHub para redeploy automático.
+4. No claude.ai, adicione o conector `https://jwmcp.juanbonfim.com.br/mcp` e faça login com o `MCP_AUTH_SECRET`.
+
+---
+
 # JW MCP Server
 
 [![npm version](https://img.shields.io/npm/v/jw-mcp)](https://www.npmjs.com/package/jw-mcp)

@@ -1,10 +1,12 @@
+import { LOCALES, DEFAULT_LANG } from './locale.js';
+const DEFAULT_MEPS = LOCALES[DEFAULT_LANG].meps;
 import { fetchPublicationData, downloadRtfContent, getCurrentWatchtowerIssue } from './rtf-utils.js';
 import { parseRTF } from './rtf-parser.js';
 
 /**
  * Get available Watchtower articles for a specific issue
  */
-export async function getWatchtowerLinks(pub = 'w', langwritten = 'E', issue = null, fileformat = 'RTF') {
+export async function getWatchtowerLinks(pub = 'w', langwritten = DEFAULT_MEPS, issue = null, fileformat = 'RTF') {
   try {
     // Use current Watchtower issue (2 months behind) if none provided
     const finalIssue = issue || getCurrentWatchtowerIssue();
@@ -70,8 +72,8 @@ export const watchtowerTools = [
         },
         langwritten: {
           type: 'string', 
-          description: 'Language code: "E" for English, "S" for Spanish, etc.',
-          default: 'E'
+          description: 'Código de idioma do jw.org: "T" português (padrão), "E" inglês, "S" espanhol.',
+          default: DEFAULT_MEPS
         },
         issue: {
           type: 'string',

@@ -1,164 +1,112 @@
 import { fetchWithTimeout } from './fetch-with-timeout.js';
+import { getLocale, LANG_SCHEMA } from './locale.js';
+import { fetchJsonCached } from './wol-http.js';
 
-// Tool definition
 export const captionsTool = {
   name: 'get_jw_captions',
-  description: 'Fetches video captions from JW.org by video ID or URL. Accepts either a direct video ID (e.g., "pub-jwbvod25_17_VIDEO") or a JW.org URL (e.g., "https://www.jw.org/finder?srcid=jwlshare&wtlocale=E&lank=pub-jwbvod25_17_VIDEO")',
+  description:
+    'Legendas (transcrição) de um vídeo do JW.org, no idioma escolhido (padrão português). Aceita o ID do vídeo (ex.: "pub-jwbvod26_2_VIDEO", que get_meeting_week devolve em "videos") ou uma URL do jw.org com lank=/docid=. format="text" (padrão) devolve só o texto falado, mais econômico; "vtt" devolve o arquivo com tempos.',
   inputSchema: {
     type: 'object',
     properties: {
       video_id: {
         type: 'string',
-        description: 'The JW.org video ID or a JW.org URL containing the video ID. If a URL is provided, the video ID will be automatically extracted.',
+        description: 'ID do vídeo (pub-..._VIDEO ou docid-..._VIDEO) ou URL do jw.org que o contenha.',
       },
+      format: { type: 'string', enum: ['text', 'vtt'], description: 'Formato da legenda (padrão: text).', default: 'text' },
+      lang: LANG_SCHEMA,
     },
     required: ['video_id'],
   },
 };
 
-/**
- * Extract video ID from JW.org URL or return the input if it's already a video ID
- */
-function extractVideoId(input) {
-  // If it's already a video ID (doesn't contain http/https), return as-is
-  if (!input.includes('http')) {
-    return input;
-  }
-  
-  // Extract video ID from various JW.org URL formats
+export function extractVideoId(input) {
+  if (!String(input).includes('http')) return String(input).trim();
   try {
     const url = new URL(input);
-    
-    // Check for 'lank' parameter (most common format)
     const lank = url.searchParams.get('lank');
-    if (lank) {
-      return lank;
-    }
-    
-    // Check for 'docid' parameter (alternative format)
+    if (lank) return lank;
     const docid = url.searchParams.get('docid');
-    if (docid) {
-      return docid;
-    }
-    
-    // Check if video ID is in the pathname
-    const pathMatch = url.pathname.match(/\/(pub-[^\/]+)/);
-    if (pathMatch) {
-      return pathMatch[1];
-    }
-    
-    // If no video ID found, return the original input and let the API handle the error
+    if (docid) return docid;
+    const pathMatch = url.pathname.match(/\/(pub-[^/]+|docid-[^/]+)/);
+    if (pathMatch) return pathMatch[1];
     return input;
-  } catch (error) {
-    // If URL parsing fails, assume it's a direct video ID
+  } catch {
     return input;
   }
 }
 
-// Tool implementation
-export async function getCaptionsImplementation(video_id) {
+/** Convert WebVTT to plain spoken text (no timings, no positioning, no repeated lines). */
+export function vttToText(vtt) {
+  const lines = String(vtt).replace(/\r/g, '').split('\n');
+  const out = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line === 'WEBVTT' || /^\d+$/.test(line) || line.includes('-->') || /^(NOTE|STYLE|REGION)\b/.test(line)) continue;
+    const text = line.replace(/<[^>]+>/g, '').trim();
+    if (text && out[out.length - 1] !== text) out.push(text);
+  }
+  // join lines into running text, keeping sentence breaks
+  return out.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+export async function getCaptionsImplementation(video_id, { format = 'text', lang } = {}) {
   try {
-    // Extract video ID from URL if needed
-    const extractedVideoId = extractVideoId(video_id);
-    
-    // Step 1: Get JSON data for JW video
-    const mediaUrl = `https://b.jw-cdn.org/apis/mediator/v1/media-items/E/${extractedVideoId}?clientType=www`;
-    const mediaResponse = await fetchWithTimeout(mediaUrl);
-    
-    if (!mediaResponse.ok) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Failed to fetch video data for ID "${extractedVideoId}": ${mediaResponse.statusText}`,
-          },
-        ],
-      };
+    const loc = getLocale(lang);
+    const id = extractVideoId(video_id);
+    const mediaUrl = `https://b.jw-cdn.org/apis/mediator/v1/media-items/${loc.meps}/${encodeURIComponent(id)}?clientType=www`;
+    const mediaData = await fetchJsonCached(mediaUrl);
+    const media = mediaData?.media?.[0];
+
+    if (!media || !media.files) {
+      return { content: [{ type: 'text', text: `Vídeo "${id}" não encontrado em ${loc.code}.` }], isError: true };
     }
 
-    const mediaData = await mediaResponse.json();
-
-    // Check if media exists and has files
-    if (!mediaData.media || !mediaData.media[0] || !mediaData.media[0].files) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: 'No media found for this video ID',
-          },
-        ],
-      };
-    }
-
-    const media = mediaData.media[0];
-    
-    // Extract video metadata
-    const title = media.title || 'Unknown Title';
-    const thumbnail = media.images?.wss?.sm || '';
-
-    // Check for subtitles URL
-    const subtitlesUrl = media.files[1]?.subtitles?.url;
+    const subtitlesUrl = media.files.find((f) => f.subtitles?.url)?.subtitles?.url;
+    const video480 = media.files.find((f) => /480/.test(f.label || ''))?.progressiveDownloadURL || null;
 
     if (!subtitlesUrl) {
       return {
-        content: [
-          {
-            type: 'text',
-            text: 'No subtitle file was found for this video. Unable to provide further info.',
-          },
-        ],
-        isError: true,
+        content: [{ type: 'text', text: JSON.stringify({ title: media.title, duration_seconds: media.duration, video_url: video480, subtitles: null, note: 'Vídeo sem legenda disponível neste idioma.' }, null, 2) }],
       };
     }
 
-    // Step 2: Get subtitles from JW.org
     const subtitlesResponse = await fetchWithTimeout(subtitlesUrl);
-    
     if (!subtitlesResponse.ok) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Failed to fetch subtitles: ${subtitlesResponse.statusText}`,
-          },
-        ],
-      };
+      return { content: [{ type: 'text', text: `Falha ao baixar a legenda: HTTP ${subtitlesResponse.status}` }], isError: true };
     }
+    const vtt = await subtitlesResponse.text();
 
-    const subtitlesData = await subtitlesResponse.text();
-
-    // Return the result matching the n8n workflow output
     return {
       content: [
         {
           type: 'text',
-          text: JSON.stringify({
-            title,
-            thumbnail,
-            subtitles: subtitlesData,
-          }, null, 2),
+          text: JSON.stringify(
+            {
+              video_id: id,
+              title: media.title || null,
+              lang: loc.code,
+              duration_seconds: media.duration ?? null,
+              thumbnail: media.images?.wss?.sm || null,
+              video_url: video480,
+              format,
+              subtitles: format === 'vtt' ? vtt : vttToText(vtt),
+            },
+            null,
+            2
+          ),
         },
       ],
     };
-
   } catch (error) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Error: ${error.message}`,
-        },
-      ],
-      isError: true,
-    };
+    return { content: [{ type: 'text', text: `Erro: ${error.message}` }], isError: true };
   }
 }
 
-// Tool handler
 export async function handleCaptionsTool(request) {
   if (request.params.name === 'get_jw_captions') {
-    const { video_id } = request.params.arguments;
-    return await getCaptionsImplementation(video_id);
+    const { video_id, format, lang } = request.params.arguments || {};
+    return getCaptionsImplementation(video_id, { format, lang });
   }
   return null;
 }

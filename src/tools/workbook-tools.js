@@ -1,10 +1,12 @@
+import { LOCALES, DEFAULT_LANG } from './locale.js';
+const DEFAULT_MEPS = LOCALES[DEFAULT_LANG].meps;
 import { fetchPublicationData, downloadRtfContent, getCurrentIssue } from './rtf-utils.js';
 import { parseRTF } from './rtf-parser.js';
 
 /**
  * Get available workbook links for a specific issue
  */
-export async function getWorkbookLinks(pub = 'mwb', langwritten = 'E', issue = null, fileformat = 'RTF') {
+export async function getWorkbookLinks(pub = 'mwb', langwritten = DEFAULT_MEPS, issue = null, fileformat = 'RTF') {
   try {
     const { files, pubName, formattedDate, language } = await fetchPublicationData(pub, langwritten, issue, fileformat);
     
@@ -68,8 +70,8 @@ export const workbookTools = [
         },
         langwritten: {
           type: 'string', 
-          description: 'Language code: "E" for English, "S" for Spanish, etc.',
-          default: 'E'
+          description: 'Código de idioma do jw.org: "T" português (padrão), "E" inglês, "S" espanhol.',
+          default: DEFAULT_MEPS
         },
         issue: {
           type: 'string',

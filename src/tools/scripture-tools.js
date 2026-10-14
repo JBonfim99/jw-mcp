@@ -4,6 +4,8 @@
  */
 
 import { scraper } from './wol-scraper.js';
+import { getLocale, LANG_SCHEMA } from './locale.js';
+import { bookNamePt } from './scripture-refs.js';
 import {
   searchBooks,
   getBookName,
@@ -111,13 +113,14 @@ export const getBibleVerseTool = {
       verse: {
         type: 'number',
         description: 'Verse number within the chapter'
-      }
+      },
+      lang: LANG_SCHEMA
     },
     required: ['book', 'chapter', 'verse']
   }
 };
 
-export async function getBibleVerseImplementation(book, chapter, verse) {
+export async function getBibleVerseImplementation(book, chapter, verse, lang) {
   try {
     // Validate inputs
     const validation = validateReference(book, chapter, verse);
@@ -132,10 +135,10 @@ export async function getBibleVerseImplementation(book, chapter, verse) {
     }
 
     // Fetch verse
-    const verseData = await scraper.getSingleVerse(book, chapter, verse);
+    const verseData = await scraper.getSingleVerse(book, chapter, verse, lang);
 
     // Format reference
-    const reference = formatReference(book, chapter, verse);
+    const reference = getLocale(lang).code === 'pt' ? `${bookNamePt(book)} ${chapter}:${verse}` : formatReference(book, chapter, verse);
 
     return {
       content: [{
@@ -168,7 +171,7 @@ export async function getBibleVerseImplementation(book, chapter, verse) {
 
 export const getVerseWithStudyTool = {
   name: 'get_verse_with_study',
-  description: 'Get Bible verse(s) with comprehensive study content from wol.jw.org. Supports single verses or ranges (e.g., "14-16"). Returns verse text, study notes, cross-references, research articles from the Research Guide, and chapter outlines. Field selection allows you to customize what content is returned.',
+  description: 'Versículo(s) da Bíblia de Estudo (TNM) com conteúdo de pesquisa da Biblioteca On-line, no idioma escolhido (padrão português): texto, notas de estudo, referências cruzadas, TODAS as referências do Guia de Pesquisa (study_articles, com ano — as mais recentes vêm primeiro) e, se pedido, o Índice das Publicações (publication_index, mais completo, inclui publicações antigas). Abra qualquer referência com get_reference passando o versículo para receber só os parágrafos que o explicam. Atenção a datas: prefira publicações recentes, pois o entendimento de alguns textos foi ajustado ao longo do tempo.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -188,16 +191,16 @@ export const getVerseWithStudyTool = {
         type: 'array',
         items: {
           type: 'string',
-          enum: ['verses', 'study_notes', 'study_articles', 'cross_references', 'chapter_level', 'combined_text']
+          enum: ['verses', 'study_notes', 'study_articles', 'publication_index', 'cross_references', 'chapter_level', 'combined_text']
         },
-        description: 'Content fields to include. Options: "verses" (verse text), "study_notes" (verse-specific notes), "study_articles" (research guide articles), "cross_references" (related scriptures), "chapter_level" (outline and chapter content), "combined_text" (all verses as single text). Default: ["verses", "study_notes"]',
-        default: ['verses', 'study_notes']
+        description: 'Campos: "verses", "study_notes", "study_articles" (Guia de Pesquisa), "publication_index" (Índice das Publicações), "cross_references", "chapter_level" (esboço do capítulo), "combined_text". Padrão: ["verses", "study_notes", "study_articles", "cross_references"]',
+        default: ['verses', 'study_notes', 'study_articles', 'cross_references']
       },
       limit: {
         type: 'number',
-        description: 'Maximum number of study articles to return. Default: 5 for articles, unlimited for other fields.',
-        default: 5
+        description: 'Máximo de referências em study_articles e publication_index (padrão: sem limite).'
       },
+      lang: LANG_SCHEMA,
       fetch: {
         type: 'boolean',
         description: 'Force fresh data from wol.jw.org (useful when content appears to be missing). Default: false',
@@ -208,7 +211,7 @@ export const getVerseWithStudyTool = {
   }
 };
 
-export async function getVerseWithStudyImplementation(book, chapter, verse, fields = ['verses', 'study_notes'], limit = 5, fetch = false) {
+export async function getVerseWithStudyImplementation(book, chapter, verse, fields = ['verses', 'study_notes', 'study_articles', 'cross_references'], limit = null, fetch = false, lang) {
   try {
     // Validate inputs
     const validation = validateReference(book, chapter, verse);
@@ -223,7 +226,7 @@ export async function getVerseWithStudyImplementation(book, chapter, verse, fiel
     }
 
     // Validate fields
-    const validFields = ['verses', 'study_notes', 'study_articles', 'cross_references', 'chapter_level', 'combined_text'];
+    const validFields = ['verses', 'study_notes', 'study_articles', 'publication_index', 'cross_references', 'chapter_level', 'combined_text'];
     const invalidFields = fields.filter(f => !validFields.includes(f));
     if (invalidFields.length > 0) {
       return {
@@ -236,21 +239,27 @@ export async function getVerseWithStudyImplementation(book, chapter, verse, fiel
     }
 
     // Fetch verse with study content
-    const studyData = await scraper.getVerseWithStudy(book, chapter, verse, {
+    const studyData = await scraper.getVerseWithStudy(book, chapter, String(verse), {
       fields: fields,
-      limit: limit
+      limit: limit,
+      lang,
+      fresh: fetch
     });
 
     // Format reference
-    const reference = formatReference(book, chapter, studyData.verse_range);
+    const reference = studyData.lang === 'pt'
+      ? `${studyData.book_name} ${chapter}:${studyData.verse_range}`
+      : formatReference(book, chapter, studyData.verse_range);
 
     // Build response
     const response = {
       reference: reference,
+      lang: studyData.lang,
       book_number: studyData.book_num,
       book_name: studyData.book_name,
       chapter: studyData.chapter,
-      verse_range: studyData.verse_range
+      verse_range: studyData.verse_range,
+      source_url: studyData.source_url
     };
 
     // Add requested fields
@@ -270,11 +279,17 @@ export async function getVerseWithStudyImplementation(book, chapter, verse, fiel
     if (studyData.study_articles) {
       response.study_articles = studyData.study_articles;
       response.study_articles_count = studyData.study_articles.length;
+      response.study_articles_total = studyData.study_articles_total;
+    }
+
+    if (studyData.publication_index) {
+      response.publication_index = studyData.publication_index;
+      response.publication_index_total = studyData.publication_index_total;
+      if (studyData.publication_index_unlinked) response.publication_index_unlinked = studyData.publication_index_unlinked;
     }
 
     if (studyData.cross_references) {
       response.cross_references = studyData.cross_references;
-      response.cross_references_count = studyData.cross_references.length;
     }
 
     if (studyData.chapter_level) {
@@ -320,13 +335,14 @@ export const getBibleVerseURLTool = {
       verse: {
         type: 'string',
         description: 'Optional verse reference. Can be: single verse ("18"), verse range ("14-16"), or comma-separated verses ("1,3,5"). If omitted, returns URL for the entire chapter.'
-      }
+      },
+      lang: LANG_SCHEMA
     },
     required: ['book', 'chapter']
   }
 };
 
-export async function getBibleVerseURLImplementation(book, chapter, verse) {
+export async function getBibleVerseURLImplementation(book, chapter, verse, lang) {
   try {
     // Validate the reference (use verse 1 if no verse provided for validation)
     const verseForValidation = verse ? (verse.toString().split(/[-,]/)[0]) : 1;
@@ -393,7 +409,7 @@ export async function getBibleVerseURLImplementation(book, chapter, verse) {
     }
 
     // Build the jw.org/finder URL
-    const url = `https://www.jw.org/finder?wtlocale=E&prefer=lang&bible=${bibleParam}&pub=nwtsty`;
+    const url = `https://www.jw.org/finder?wtlocale=${getLocale(lang).meps}&prefer=lang&bible=${bibleParam}&pub=nwtsty`;
 
     return {
       content: [{
@@ -419,21 +435,14 @@ export async function getBibleVerseURLImplementation(book, chapter, verse) {
 
 export async function handleScriptureTools(request) {
   const toolName = request.params.name;
-  const args = request.params.arguments;
+  const args = request.params.arguments || {};
 
   switch (toolName) {
     case 'search_bible_books':
-      return await searchBibleBooksImplementation(
-        args.query,
-        args.limit
-      );
+      return await searchBibleBooksImplementation(args.query, args.limit);
 
     case 'get_bible_verse':
-      return await getBibleVerseImplementation(
-        args.book,
-        args.chapter,
-        args.verse
-      );
+      return await getBibleVerseImplementation(args.book, args.chapter, args.verse, args.lang);
 
     case 'get_verse_with_study':
       return await getVerseWithStudyImplementation(
@@ -442,15 +451,12 @@ export async function handleScriptureTools(request) {
         args.verse,
         args.fields,
         args.limit,
-        args.fetch
+        args.fetch,
+        args.lang
       );
 
     case 'get_bible_verse_url':
-      return await getBibleVerseURLImplementation(
-        args.book,
-        args.chapter,
-        args.verse
-      );
+      return await getBibleVerseURLImplementation(args.book, args.chapter, args.verse, args.lang);
 
     default:
       return null;

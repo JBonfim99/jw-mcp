@@ -1,0 +1,63 @@
+# Stack do jw-mcp-pt para Portainer + Traefik (Docker Swarm).
+#
+# Antes de subir:
+#   1. DNS: registro A de jwmcp.juanbonfim.com.br apontando para o IP do servidor.
+#   2. No Portainer, em Environment variables do stack, defina:
+#        MCP_AUTH_SECRET = (gere com: openssl rand -hex 32)
+#   3. Confira os 3 nomes abaixo marcados com AJUSTE para baterem com o seu Traefik
+#      (rede externa, entrypoint HTTPS e certresolver).
+#   4. Se a imagem no GHCR estiver privada, cadastre o registry ghcr.io no Portainer
+#      (usuário JBonfim99 + token com escopo read:packages).
+#
+# Depois: no claude.ai > Configurações > Conectores > Adicionar conector personalizado
+#   URL: https://jwmcp.juanbonfim.com.br/mcp
+#   Na tela de login, cole o MCP_AUTH_SECRET.
+
+version: "3.8"
+
+services:
+  jw-mcp:
+    image: ghcr.io/jbonfim99/jw-mcp:latest
+    environment:
+      MCP_TRANSPORT: http
+      MCP_PORT: "8080"
+      MCP_BASE_URL: https://jwmcp.juanbonfim.com.br
+      MCP_AUTH: "true"
+      MCP_AUTH_SECRET: ${MCP_AUTH_SECRET}
+      MCP_TRUST_PROXY: "true"
+      AUTH_STORE_PATH: /data/auth.json
+      JW_DEFAULT_LANG: pt
+      JW_MCP_TIMEZONE: America/Fortaleza
+    volumes:
+      - jw_mcp_data:/data
+    networks:
+      - network_public # AJUSTE: rede externa do Traefik
+    deploy:
+      mode: replicated
+      replicas: 1 # o login fica em /data/auth.json: uma réplica só
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+      restart_policy:
+        condition: any
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.jwmcp.rule=Host(`jwmcp.juanbonfim.com.br`)
+        - traefik.http.routers.jwmcp.entrypoints=websecure # AJUSTE
+        - traefik.http.routers.jwmcp.tls=true
+        - traefik.http.routers.jwmcp.tls.certresolver=letsencryptresolver # AJUSTE
+        - traefik.http.routers.jwmcp.service=jwmcp
+        - traefik.http.services.jwmcp.loadbalancer.server.port=8080
+        - traefik.http.services.jwmcp.loadbalancer.passHostHeader=true
+
+volumes:
+  jw_mcp_data:
+    external: false
+
+networks:
+  network_public: # AJUSTE: mesmo nome da rede acima
+    external: true

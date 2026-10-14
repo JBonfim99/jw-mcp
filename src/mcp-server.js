@@ -7,6 +7,7 @@ import {
 import { captionsTool, handleCaptionsTool } from './tools/captions-tool.js';
 import { workbookTools, handleWorkbookTools } from './tools/workbook-tools.js';
 import { watchtowerTools, handleWatchtowerTools } from './tools/watchtower-tools.js';
+import { studyTools, handleStudyTools } from './tools/study-tools.js';
 import {
   searchBibleBooksTool,
   getBibleVerseTool,
@@ -18,6 +19,7 @@ import {
 const { version: SERVER_VERSION } = createRequire(import.meta.url)('../package.json');
 
 const allTools = [
+  ...studyTools,
   captionsTool,
   ...workbookTools,
   ...watchtowerTools,
@@ -28,6 +30,7 @@ const allTools = [
 ];
 
 const toolHandlers = [
+  handleStudyTools,
   handleCaptionsTool,
   handleWorkbookTools,
   handleWatchtowerTools,
