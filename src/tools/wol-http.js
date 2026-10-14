@@ -61,27 +61,34 @@ export async function fetchWolHtml(url, loc, { fresh = false } = {}) {
   return value;
 }
 
-/** Fetch JSON from the jw-cdn APIs (mediator, pub-media) with caching. */
-export async function fetchJsonCached(url, { fresh = false, headers = {}, timeoutMs } = {}) {
+/**
+ * Fetch JSON (jw-cdn APIs, jw.org study-Bible data) with caching.
+ * bare: send only a minimal User-Agent. www.jw.org (Akamai) answers some
+ * datacenter IPs with "202 Accepted" and an empty body (a bot challenge) when
+ * the request looks like a full browser (Chrome UA + Accept-Language/Referer),
+ * while a minimal "Mozilla/5.0" request gets the JSON (checked from RackNerd).
+ */
+export async function fetchJsonCached(url, { fresh = false, headers = {}, timeoutMs, bare = false } = {}) {
   const key = `json|${url}`;
   if (!fresh) {
     const cached = cacheGet(key);
     if (cached) return cached;
   }
-  const response = await fetchWithTimeout(
-    url,
-    {
-      headers: {
+  const requestHeaders = bare
+    ? { 'User-Agent': 'Mozilla/5.0', ...headers }
+    : {
         'User-Agent': USER_AGENT,
         Accept: 'application/json, text/plain, */*',
         'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.5',
         ...headers,
-      },
-    },
-    timeoutMs
-  );
+      };
+  const response = await fetchWithTimeout(url, { headers: requestHeaders }, timeoutMs);
   if (!response.ok) throw new Error(`HTTP ${response.status} para ${url}`);
-  const value = await response.json();
+  const body = await response.text();
+  if (response.status === 202 || !body.trim()) {
+    throw new Error(`HTTP ${response.status} sem conteúdo (desafio anti-robô do jw.org) para ${url}`);
+  }
+  const value = JSON.parse(body);
   cacheSet(key, value);
   return value;
 }
