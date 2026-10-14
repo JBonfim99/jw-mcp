@@ -140,6 +140,7 @@ async function loadVerses(book, chapter, lang, fresh) {
     const toMap = (key) => new Map(Object.entries(wol.sections).map(([v, s]) => [Number(v), s[key] || []]));
     return {
       source: 'wol.jw.org',
+      fallback_reason: `JSON da Bíblia de estudo indisponível (${error.message}); sem poesia linha a linha, mídia e trechos de vídeo`,
       data: {
         url: wol.url,
         verses: wol.verses.map((v) => ({ verse: v.verse_num, text: v.verse_text })),
@@ -180,7 +181,7 @@ export async function getBibleVerseImplementation(args = {}) {
     const validation = validateReference(book, chapter, verseStart);
     if (!validation.valid) return { content: [{ type: 'text', text: `Validation error: ${validation.error}` }], isError: true };
 
-    const { data, source } = await loadVerses(book, chapter, args.lang, false);
+    const { data, source, fallback_reason } = await loadVerses(book, chapter, args.lang, false);
     const verses = data.verses.filter((v) => v.verse >= verseStart && v.verse <= verseEnd);
     if (!verses.length) return { content: [{ type: 'text', text: `Versículo não encontrado: ${displayRef(book, chapter, verseStart, verseEnd, args.lang)}` }], isError: true };
 
@@ -191,6 +192,7 @@ export async function getBibleVerseImplementation(args = {}) {
       source,
       verses
     };
+    if (fallback_reason) result.note = fallback_reason;
     if (verseStart <= 1 && data.superscription) result.superscription = data.superscription;
     if (verses.length === 1) result.text = verses[0].text;
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -257,7 +259,7 @@ export async function getVerseWithStudyImplementation(args = {}) {
             .catch((e) => ({ error: e.message }))
         : Promise.resolve(null)
     ]);
-    const { data, source } = bible;
+    const { data, source, fallback_reason } = bible;
     const verses = data.verses.filter((v) => v.verse >= verseStart && v.verse <= verseEnd);
     const lastVerse = verses.length ? verses[verses.length - 1].verse : verseStart;
 
@@ -270,6 +272,7 @@ export async function getVerseWithStudyImplementation(args = {}) {
       text_source: source,
       jw_org_link: data.link || null
     };
+    if (fallback_reason) response.note = fallback_reason;
 
     if (fields.includes('verses')) {
       response.verses = verses;

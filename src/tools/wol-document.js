@@ -118,7 +118,7 @@ export function parseArticleBlocks(html, { readWords } = {}) {
 
       const cls = ($el.attr('class') || '').split(/\s+/);
       let type = 'paragraph';
-      if (/^h[1-3]$/.test(el.name)) type = `heading${el.name[1]}`;
+      if (/^h[1-3]$/.test(el.name)) type = $el.closest('aside, .boxContent, .blockTeach, .boxTtl').length ? 'box_heading' : `heading${el.name[1]}`;
       else if (cls.includes('qu')) type = 'question';
       else if (cls.includes('themeScrp')) type = 'theme';
       else if (cls.includes('pubRefs') || cls.includes('contextTtl')) type = 'meta';
@@ -211,6 +211,11 @@ export function parseWatchtowerStudy(html, opts = {}) {
       result.theme_scripture = { text: b.text, scriptures: shortScriptures(b.scriptures) };
       continue;
     }
+    if (b.type === 'box_heading' && /qual é a sua resposta|can you answer|qué respondería/i.test(b.text)) {
+      section = { heading: b.text, items: [], review: true };
+      continue;
+    }
+    if (b.type === 'box_heading') continue;
     if (b.type === 'heading2' || b.type === 'heading3') {
       if (/qual é a sua resposta|can you answer|qué respondería/i.test(b.text)) {
         section = { heading: b.text, items: [], review: true };

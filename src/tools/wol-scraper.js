@@ -38,8 +38,8 @@ export function parseChapterHtml(html, bookNum, chapterNum, loc) {
     if (!m || Number(m[1]) !== bookNum || Number(m[2]) !== chapterNum) return;
     const verse = Number(m[3]);
     const c = $(elem).clone();
-    c.find('a.b, a.vl, a.cl, sup, .tt').remove();
-    const text = clean(c.text()).replace(/^\d+\s+/, '');
+    c.find('a.b, a.vl, a.cl, a.fn, sup, .tt').remove();
+    const text = clean(c.text()).replace(/^\d+\s+/, '').replace(/\*/g, '').replace(/\s+([.,;:!?])/g, '$1');
     if (!text) return;
     verseMap.set(verse, verseMap.has(verse) ? `${verseMap.get(verse)} ${text}` : text);
   });

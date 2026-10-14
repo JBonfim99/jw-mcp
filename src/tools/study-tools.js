@@ -109,8 +109,11 @@ export function parseParagraphRefs(str) {
 }
 
 export function selectParagraphs(doc, { target = null, pages = null, paragraphs: paragraphRefs = null, context = 1, maxParagraphs = 8 } = {}) {
-  const textBlocks = doc.blocks.filter((b) => ['paragraph', 'question', 'theme', 'box'].includes(b.type));
   const questions = new Map(doc.blocks.filter((b) => b.type === 'question').map((b) => [b.pid, b.text]));
+  const attached = new Set(doc.blocks.filter((b) => b.question_pid).map((b) => b.question_pid));
+  const textBlocks = doc.blocks.filter(
+    (b) => ['paragraph', 'theme', 'box'].includes(b.type) || (b.type === 'question' && !attached.has(b.pid))
+  );
   const hits = (b) => (b.scriptures || []).some((s) => citesTarget(s._parsed, target));
 
   let matchedBy = 'start';

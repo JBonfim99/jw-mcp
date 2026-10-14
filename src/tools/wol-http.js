@@ -62,13 +62,24 @@ export async function fetchWolHtml(url, loc, { fresh = false } = {}) {
 }
 
 /** Fetch JSON from the jw-cdn APIs (mediator, pub-media) with caching. */
-export async function fetchJsonCached(url, { fresh = false } = {}) {
+export async function fetchJsonCached(url, { fresh = false, headers = {}, timeoutMs } = {}) {
   const key = `json|${url}`;
   if (!fresh) {
     const cached = cacheGet(key);
     if (cached) return cached;
   }
-  const response = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } });
+  const response = await fetchWithTimeout(
+    url,
+    {
+      headers: {
+        'User-Agent': USER_AGENT,
+        Accept: 'application/json, text/plain, */*',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.5',
+        ...headers,
+      },
+    },
+    timeoutMs
+  );
   if (!response.ok) throw new Error(`HTTP ${response.status} para ${url}`);
   const value = await response.json();
   cacheSet(key, value);

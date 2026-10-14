@@ -190,8 +190,13 @@ export function parseBibleChapterJson(json, book, chapter) {
 }
 
 export async function fetchBibleChapter(book, chapter, lang, { fresh = false } = {}) {
+  const loc = getLocale(lang);
   const url = chapterDataUrl(book, chapter, lang);
-  const json = await fetchJsonCached(url, { fresh });
+  const json = await fetchJsonCached(url, {
+    fresh,
+    timeoutMs: Number(process.env.JW_BIBLE_JSON_TIMEOUT_MS) > 0 ? Number(process.env.JW_BIBLE_JSON_TIMEOUT_MS) : 12000,
+    headers: { 'Accept-Language': loc.accept, Referer: BOOKS_BASE[loc.code] },
+  });
   return { url, ...parseBibleChapterJson(json, book, chapter) };
 }
 
