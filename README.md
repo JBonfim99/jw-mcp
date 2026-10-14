@@ -6,12 +6,20 @@ Fork de uso pessoal do [advenimus/jw-mcp](https://github.com/advenimus/jw-mcp), 
 
 | Ferramenta | O que faz |
 |---|---|
-| `get_meeting_week` | Semana de reuniões estruturada (padrão: semana atual): apostila Vida e Ministério por partes (minutos, perguntas, referências, textos, vídeos) e estudo de A Sentinela com cada pergunta junto dos seus parágrafos, textos de leitura marcados, imagens descritas e quadro de recapitulação. |
-| `get_verse_with_study` | Em português. Traz **todas** as referências do Guia de Pesquisa (com ano), o Índice das Publicações (`publication_index`), notas de estudo e referências cruzadas. |
-| `get_reference` | Abre uma referência e devolve só os parágrafos que citam o versículo (ou as páginas pedidas), com a pergunta de estudo e a seção. |
+| `get_meeting_week` | Semana de reuniões estruturada (padrão: semana atual; `offset_weeks` para outras): apostila Vida e Ministério por partes (minutos, perguntas, referências, textos, vídeos, cânticos) e estudo de A Sentinela com cada pergunta junto dos seus parágrafos, textos de leitura marcados, imagens descritas e quadro de recapitulação. |
+| `get_verse_with_study` | Texto (poesia linha a linha), notas de estudo, rodapé, referências cruzadas, mídia e **trechos de vídeo com minutagem** (JSON da Bíblia de estudo do jw.org) + **todo** o Guia de Pesquisa com ano e, se pedido, o Índice das Publicações (wol). Aceita `reference` ("Mateus 6:33"). |
+| `get_bible_verse` | Texto de versículo, trecho ou capítulo. |
+| `get_reference` | Abre uma referência e devolve só os parágrafos que citam o versículo, os parágrafos do rótulo (`label` "w24.12 23 §§ 13-14") ou as páginas. |
 | `search_library` | Busca de texto na Biblioteca On-line inteira, com filtro por coleção e ordenação por data. |
-| `get_jw_captions` | Legenda do vídeo no idioma escolhido, como texto corrido (ou VTT). |
-| todas | Parâmetro `lang` (`pt` padrão, `en`, `es`). Cache em memória de 6 h para não sobrecarregar o site. |
+| `get_daily_text` | Texto diário, com os parágrafos da matéria de origem (`sources: true`). |
+| `get_song` | Letra do cântico pelo número. |
+| `get_jw_captions` | Transcrição de vídeo (texto, `[m:ss]` ou VTT), recorte por `start`/`end`, paginação e atalhos ("última transmissão", "transmissão de setembro de 2026", "última adoração matinal"). |
+| `list_jw_videos` | Últimos vídeos: transmissão mensal, Adoração Matinal, discursos, boletins. |
+| todas | Parâmetro `lang` (`pt` padrão, `en`, `es`). Cache em memória de 6 h. O servidor envia instruções com o fluxo de preparação. |
+
+As ferramentas antigas em RTF (`getWorkbook*`, `getWatchtower*`) foram removidas: `get_meeting_week` as substitui e não quebra nos meses pares.
+
+O workflow `CI` roda testes offline (fixtures reais) e um **teste ao vivo** de todas as ferramentas contra o jw.org a cada push e toda segunda-feira — se o site mudar o layout, o job `live` falha.
 
 Variáveis extras: `JW_DEFAULT_LANG` (padrão `pt`), `JW_MCP_TIMEZONE` (padrão `America/Fortaleza`), `JW_MCP_CACHE_TTL_MS`.
 
