@@ -140,7 +140,7 @@ async function loadVerses(book, chapter, lang, fresh) {
     const toMap = (key) => new Map(Object.entries(wol.sections).map(([v, s]) => [Number(v), s[key] || []]));
     return {
       source: 'wol.jw.org',
-      fallback_reason: `JSON da Bíblia de estudo indisponível (${error.message}); sem poesia linha a linha, mídia e trechos de vídeo`,
+      fallback_reason: `Texto veio do wol.jw.org sem poesia linha a linha, mídia e trechos de vídeo: ${error.message}`,
       data: {
         url: wol.url,
         verses: wol.verses.map((v) => ({ verse: v.verse_num, text: v.verse_text })),

@@ -13,6 +13,7 @@ import {
   parseSearchResults,
 } from './wol-document.js';
 import { publicScriptures } from './scripture-refs.js';
+import { prewarmChapters } from './bible-json.js';
 
 const ok = (data) => ({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] });
 const fail = (msg) => ({ content: [{ type: 'text', text: msg }], isError: true });
@@ -327,6 +328,27 @@ export async function getMeetingWeekImplementation(args = {}) {
     const songNumbers = (list) => [...new Set((list || []).map((t) => Number((String(t).match(/\d+/) || [])[0])).filter(Boolean))];
     if (out.workbook) out.workbook.song_numbers = songNumbers(out.workbook.songs);
     if (out.watchtower) out.watchtower.song_numbers = songNumbers(out.watchtower.songs);
+    // Load the study-Bible data for every chapter cited this week in the
+    // background, so follow-up questions about these texts come back complete.
+    try {
+      const refs = [];
+      const collect = (list) => {
+        for (const t of list || []) {
+          const c = parseCitation(String(t).replace(/\s*\(leitura\)$/, ''));
+          if (c?.book && c?.chapter) refs.push({ book: c.book, chapter: c.chapter });
+        }
+      };
+      for (const s of out.workbook?.sections || []) for (const p of s.parts) collect(p.scriptures);
+      for (const s of out.watchtower?.sections || []) {
+        for (const it of s.items) {
+          collect(it.question_scriptures);
+          for (const p of it.paragraphs) collect(p.scriptures);
+        }
+      }
+      prewarmChapters(refs.slice(0, 40), loc.code);
+    } catch (e) {
+      console.error(`[meeting-week] prewarm: ${e.message}`);
+    }
     if (!links.workbook && !links.watchtower) {
       out.note = 'Nenhuma matéria encontrada para essa semana (pode ser semana de congresso/assembleia ou ainda não publicada).';
     }

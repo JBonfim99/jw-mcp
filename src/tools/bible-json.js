@@ -189,14 +189,95 @@ export function parseBibleChapterJson(json, book, chapter) {
   };
 }
 
-export async function fetchBibleChapter(book, chapter, lang, { fresh = false } = {}) {
+// The study-Bible JSON sits behind CloudFront. From some datacenter IPs a
+// cache miss can take much longer than a browser would wait, while a hit is
+// instant. So each chapter request keeps running in the background (up to
+// BACKGROUND_TIMEOUT_MS) even after the tool gives up waiting (WAIT_MS) and
+// falls back to wol.jw.org; the result lands in a long-lived cache, so the next
+// call for that chapter is complete. Bible text is static: cache for 30 days.
+const WAIT_MS = Number(process.env.JW_BIBLE_JSON_WAIT_MS) > 0 ? Number(process.env.JW_BIBLE_JSON_WAIT_MS) : 10000;
+const BACKGROUND_TIMEOUT_MS = 120000;
+const CHAPTER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const CHAPTER_CACHE_MAX = 600;
+
+const chapterCache = new Map(); // key -> { at, value }
+const inflight = new Map(); // key -> Promise
+
+function cacheKey(book, chapter, lang) {
+  return `${getLocale(lang).code}:${book}:${chapter}`;
+}
+
+function getCachedChapter(key) {
+  const hit = chapterCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > CHAPTER_TTL_MS) {
+    chapterCache.delete(key);
+    return null;
+  }
+  return hit.value;
+}
+
+function loadChapter(book, chapter, lang, key) {
+  if (inflight.has(key)) return inflight.get(key);
   const url = chapterDataUrl(book, chapter, lang);
-  const json = await fetchJsonCached(url, {
-    fresh,
-    timeoutMs: Number(process.env.JW_BIBLE_JSON_TIMEOUT_MS) > 0 ? Number(process.env.JW_BIBLE_JSON_TIMEOUT_MS) : 12000,
-    bare: true,
+  const p = fetchJsonCached(url, { fresh: true, timeoutMs: BACKGROUND_TIMEOUT_MS, bare: true })
+    .then((json) => {
+      const value = { url, ...parseBibleChapterJson(json, book, chapter) };
+      chapterCache.set(key, { at: Date.now(), value });
+      while (chapterCache.size > CHAPTER_CACHE_MAX) chapterCache.delete(chapterCache.keys().next().value);
+      return value;
+    })
+    .finally(() => inflight.delete(key));
+  inflight.set(key, p);
+  return p;
+}
+
+export async function fetchBibleChapter(book, chapter, lang, { fresh = false, waitMs = WAIT_MS } = {}) {
+  const key = cacheKey(book, chapter, lang);
+  if (!fresh) {
+    const cached = getCachedChapter(key);
+    if (cached) return cached;
+  }
+  const p = loadChapter(book, chapter, lang, key);
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('o jw.org ainda está carregando este capítulo (continua em segundo plano; peça de novo em ~30 s para vir completo)')),
+      waitMs
+    );
   });
-  return { url, ...parseBibleChapterJson(json, book, chapter) };
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Start loading chapters in the background (e.g. all texts of this week's meetings). */
+export function prewarmChapters(list, lang, { concurrency = 2 } = {}) {
+  const queue = [];
+  const seen = new Set();
+  for (const { book, chapter } of list) {
+    const key = cacheKey(book, chapter, lang);
+    if (seen.has(key) || getCachedChapter(key) || inflight.has(key)) continue;
+    seen.add(key);
+    queue.push({ book, chapter, key });
+  }
+  let running = 0;
+  const next = () => {
+    while (running < concurrency && queue.length) {
+      const { book, chapter, key } = queue.shift();
+      running++;
+      loadChapter(book, chapter, lang, key)
+        .catch((e) => console.error(`[bible-json] prewarm ${key}: ${e.message}`))
+        .finally(() => {
+          running--;
+          next();
+        });
+    }
+  };
+  next();
+  return queue.length + running;
 }
 
 /** Helpers to slice per-verse maps / lists to a verse range. */
