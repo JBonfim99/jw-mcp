@@ -48,7 +48,7 @@ services:
         - traefik.http.routers.jwmcp.rule=Host(`jwmcp.juanbonfim.com.br`)
         - traefik.http.routers.jwmcp.entrypoints=websecure
         - traefik.http.routers.jwmcp.tls=true
-        - traefik.http.routers.jwmcp.tls.certresolver=letsencrypt
+        - traefik.http.routers.jwmcp.tls.certresolver=letsencryptresolver
         - traefik.http.routers.jwmcp.service=jwmcp
         - traefik.http.services.jwmcp.loadbalancer.server.port=8080
         - traefik.http.services.jwmcp.loadbalancer.passHostHeader=true
