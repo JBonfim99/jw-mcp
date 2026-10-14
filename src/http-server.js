@@ -290,6 +290,18 @@ function createMcpHandler(sessions, { maxSessions, sessionIdleMs }) {
         return;
       }
 
+      if (sessionId) {
+        // Unknown or expired session (e.g. after a redeploy: sessions live in
+        // memory). Per the MCP Streamable HTTP spec this must be 404, which tells
+        // the client to start a new session with a fresh initialize request.
+        res.status(404).json({
+          jsonrpc: '2.0',
+          error: { code: -32001, message: 'Session not found; start a new session (initialize).' },
+          id: null,
+        });
+        return;
+      }
+
       res.status(400).json({ error: 'Bad request: missing session ID or not an init request' });
     } catch (error) {
       console.error('MCP handler error:', error);

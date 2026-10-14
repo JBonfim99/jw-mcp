@@ -385,7 +385,7 @@ describe('HTTP session limits', () => {
         method: 'tools/list',
         params: {},
       });
-      assert.equal(tools.status, 400);
+      assert.equal(tools.status, 404);
     } finally {
       await ctx.close();
     }
