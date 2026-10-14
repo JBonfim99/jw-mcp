@@ -15,8 +15,7 @@ async function check(name, fn) {
   try {
     const summary = await fn();
     const ms = Date.now() - t0;
-    results.push({ name, ok: true });
-    console.log(`::notice title=OK ${name} (${ms} ms)::${esc(JSON.stringify(summary, null, 1))}`);
+    results.push({ name, ok: true, ms, summary });
     return summary;
   } catch (error) {
     results.push({ name, ok: false });
@@ -142,6 +141,16 @@ await check('list_jw_videos + "última transmissão"', async () => {
   const c = parse(await getCaptionsImplementation('última transmissão', { max_chars: 5000 }));
   return { broadcasts: l.videos.map((v) => `${v.published} ${v.title}`), morning_worship: mw.videos.map((v) => v.title), latest: { title: c.title, chars: c.total_chars, next_offset: c.next_offset } };
 });
+
+// GitHub keeps at most 10 annotations of each level per step: put every
+// OK summary in at most 9 notices, grouping the overflow into the last one.
+const oks = results.filter((r) => r.ok);
+const groups = oks.length <= 9 ? oks.map((r) => [r]) : [...oks.slice(0, 8).map((r) => [r]), oks.slice(8)];
+for (const g of groups) {
+  const title = g.map((r) => `OK ${r.name} (${r.ms} ms)`).join(' + ');
+  const body = g.map((r) => `== ${r.name}\n${JSON.stringify(r.summary, null, 1)}`).join('\n');
+  console.log(`::notice title=${title.replace(/[:,]/g, ' ')}::${esc(body)}`);
+}
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} ok`);
