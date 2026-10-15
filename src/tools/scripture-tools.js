@@ -5,7 +5,7 @@
 
 import { scraper } from './wol-scraper.js';
 import { getLocale, LANG_SCHEMA } from './locale.js';
-import { bookNamePt, parseCitation } from './scripture-refs.js';
+import { bookNamePt, parseReferenceInput, lookupBookLoose } from './scripture-refs.js';
 import { fetchBibleChapter, sliceByVerse, itemsTouching } from './bible-json.js';
 import {
   searchBooks,
@@ -53,6 +53,13 @@ export async function searchBibleBooksImplementation(query, limit = 10) {
     }
 
     const results = searchBooks(query, limit);
+    // Portuguese names/symbols ("Sl", "salmo", "1ª Pedro", "apoc") first.
+    const pt = lookupBookLoose(query.replace(/^\s*(?:i|1)\s*[ºª]\s*/i, '1 ').replace(/^\s*ii\s+/i, '2 ').replace(/^\s*iii\s+/i, '3 '));
+    if (pt) {
+      const i = results.findIndex((r) => r.number === pt);
+      if (i >= 0) results.splice(i, 1);
+      results.unshift({ number: pt, name: getBookName(pt), score: 100 });
+    }
 
     if (results.length === 0) {
       return {
@@ -64,9 +71,10 @@ export async function searchBibleBooksImplementation(query, limit = 10) {
     }
 
     // Format results
-    const formattedResults = results.map(r => ({
+    const formattedResults = results.slice(0, limit).map(r => ({
       number: r.number,
       name: r.name,
+      name_pt: bookNamePt(r.number),
       testament: r.number <= 39 ? 'Old Testament' : 'New Testament',
       relevance_score: r.score
     }));
@@ -99,13 +107,23 @@ export async function searchBibleBooksImplementation(query, limit = 10) {
 
 const REFERENCE_SCHEMA = {
   type: 'string',
-  description: 'Alternativa a book/chapter/verse: "Mateus 6:33", "Mat. 6:31-34", "Sal. 23" (capítulo inteiro), "1 Tim. 6:6-8".'
+  description: 'Alternativa a book/chapter/verse, escrita como a pessoa digitou: "Mateus 6:33", "Mat. 6:31-34", "Salmo 46:2", "sl 46 2", "Sal 46.2", "1ª Pedro 5:7", "I Cor 13:4", "Sal. 23" (capítulo inteiro).'
 };
 
+/** book may come as a number (19) or a name ("Salmos", "Sl"). */
+function bookArg(book) {
+  if (book == null || book === '') return null;
+  const n = Number(book);
+  if (Number.isInteger(n) && n >= 1 && n <= 66) return n;
+  return lookupBookLoose(String(book));
+}
+
 function resolveReference(args = {}) {
-  if (args.reference) {
-    const c = parseCitation(String(args.reference));
-    if (!c) throw new Error(`Não entendi a referência "${args.reference}". Exemplos: "Mateus 6:33", "Sal. 23:1-4".`);
+  const c = args.reference ? parseReferenceInput(String(args.reference)) : null;
+  if (args.reference && !c && !(args.book && args.chapter)) {
+    throw new Error(`Não entendi a referência "${args.reference}". Exemplos: "Mateus 6:33", "Salmo 46:2", "Sal. 23:1-4".`);
+  }
+  if (c) {
     if (c.ranges) {
       const a = Math.min(...c.ranges.map((r) => r[0]));
       const b = Math.max(...c.ranges.map((r) => r[1]));
@@ -113,7 +131,7 @@ function resolveReference(args = {}) {
     }
     return { book: c.book, chapter: c.chapter, verseStart: 1, verseEnd: 999 };
   }
-  const book = Number(args.book);
+  const book = bookArg(args.book);
   const chapter = Number(args.chapter);
   if (!book || !chapter) throw new Error('Informe "reference" ou book + chapter (+ verse).');
   const v = args.verse == null || args.verse === '' ? null : String(args.verse);
@@ -167,7 +185,7 @@ export const getBibleVerseTool = {
     type: 'object',
     properties: {
       reference: REFERENCE_SCHEMA,
-      book: { type: 'number', description: 'Número do livro (1-66). Use search_bible_books se precisar.' },
+      book: { type: ['number', 'string'], description: 'Número (1-66) ou nome do livro ("Salmos", "Sl"). Prefira "reference".' },
       chapter: { type: 'number', description: 'Capítulo' },
       verse: { type: 'string', description: 'Versículo ("14") ou trecho ("14-16"). Omitido = capítulo inteiro.' },
       lang: LANG_SCHEMA
@@ -215,7 +233,7 @@ export const getVerseWithStudyTool = {
     type: 'object',
     properties: {
       reference: REFERENCE_SCHEMA,
-      book: { type: 'number', description: 'Número do livro (1-66).' },
+      book: { type: ['number', 'string'], description: 'Número (1-66) ou nome do livro. Prefira "reference".' },
       chapter: { type: 'number', description: 'Capítulo' },
       verse: { type: 'string', description: 'Versículo ("14") ou trecho ("14-16").' },
       fields: {
@@ -326,9 +344,10 @@ export const getBibleVerseURLTool = {
   inputSchema: {
     type: 'object',
     properties: {
+      reference: REFERENCE_SCHEMA,
       book: {
-        type: 'number',
-        description: 'Bible book number (1-66). Examples: Genesis=1, Psalms=19, Isaiah=23, Matthew=40, Revelation=66. Use search_bible_books to find book numbers.'
+        type: ['number', 'string'],
+        description: 'Bible book number (1-66) or name ("Salmos", "Sl"). Alternative to "reference".'
       },
       chapter: {
         type: 'number',
@@ -340,7 +359,7 @@ export const getBibleVerseURLTool = {
       },
       lang: LANG_SCHEMA
     },
-    required: ['book', 'chapter']
+    required: []
   }
 };
 
@@ -450,7 +469,14 @@ export async function handleScriptureTools(request) {
       return await getVerseWithStudyImplementation(args);
 
     case 'get_bible_verse_url':
-      return await getBibleVerseURLImplementation(args.book, args.chapter, args.verse, args.lang);
+      if (args.reference) {
+        const c = parseReferenceInput(String(args.reference));
+        if (c) {
+          const verse = c.ranges ? c.ranges.map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(',') : undefined;
+          return await getBibleVerseURLImplementation(c.book, c.chapter, verse, args.lang);
+        }
+      }
+      return await getBibleVerseURLImplementation(bookArg(args.book), Number(args.chapter), args.verse, args.lang);
 
     default:
       return null;

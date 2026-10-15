@@ -28,6 +28,19 @@ const BOOKS_PT = [
   [65, 'Judas', 'Judas', 'Ju'], [66, 'Apocalipse', 'Apo.', 'Ap'],
 ];
 
+// Other ways people write book names in Portuguese (Almeida-style symbols,
+// singular forms, older spellings). Typed by users, not used by WOL itself.
+const PT_ALIASES = [
+  [1, 'Gn', 'Gen'], [2, 'Ex', 'Êxodo'], [3, 'Lv'], [4, 'Nm'], [5, 'Dt'], [6, 'Js'], [7, 'Jz'], [8, 'Rt'],
+  [9, '1Sm'], [10, '2Sm'], [11, '1Re'], [12, '2Re'], [13, '1Cr'], [14, '2Cr'], [15, 'Ed'], [16, 'Ne'], [17, 'Et'],
+  [19, 'Sl', 'Slm', 'Salmo'], [20, 'Pv', 'Prov', 'Provérbio'], [21, 'Ecles'],
+  [22, 'Ct', 'Cânticos', 'Cântico', 'Cantares', 'Cântico dos Cânticos', 'Cânticos de Salomão', 'Cantares de Salomão'],
+  [24, 'Jr'], [25, 'Lm'], [27, 'Dn'], [28, 'Oséias'], [31, 'Abdias', 'Abd'], [33, 'Mq', 'Miquéias'], [35, 'Hc'],
+  [36, 'Sf'], [38, 'Zc'], [39, 'Ml'], [41, 'Mc'], [42, 'Lc'], [44, 'Atos dos Apóstolos'], [45, 'Rm'], [48, 'Gl'],
+  [50, 'Fp', 'Flp'], [51, 'Cl'], [52, '1Ts'], [53, '2Ts'], [54, '1Tm'], [55, '2Tm'], [56, 'Tt'], [57, 'Fm', 'Flm'],
+  [58, 'Hb'], [60, '1Pd'], [61, '2Pd'], [65, 'Jd'], [66, 'Apoc', 'Revelação'],
+];
+
 export function bookNamePt(num) {
   return BOOKS_PT[num - 1]?.[1] || null;
 }
@@ -60,6 +73,7 @@ function buildIndex(stripAccents) {
     add(full, num);
     add(abbr, num);
   }
+  for (const [num, ...names] of PT_ALIASES) names.forEach((n) => add(n, num));
   for (const [num, name] of Object.entries(BIBLE_BOOKS)) add(name, Number(num));
   for (const [abbr, num] of Object.entries(BOOK_ABBREVIATIONS)) add(abbr, num);
   return index;
@@ -77,6 +91,79 @@ export function lookupBook(name) {
     if (hit) return hit;
   }
   return null;
+}
+
+// Full names (PT + EN), accent-stripped and without spaces, for prefix matching.
+const PREFIX_NAMES = [
+  ...BOOKS_PT.map(([num, full]) => [num, full]),
+  ...PT_ALIASES.flatMap(([num, ...names]) => names.filter((n) => n.length > 3).map((n) => [num, n])),
+  ...Object.entries(BIBLE_BOOKS).map(([num, name]) => [Number(num), name]),
+].map(([num, name]) => [num, normKey(name).replace(/\s+/g, '')]);
+
+/**
+ * Book lookup for text typed by people: exact symbols/names first, then an
+ * unambiguous prefix of a full name ("apoc", "lament", "1 corin", "salm").
+ */
+export function lookupBookLoose(name) {
+  const exact = lookupBook(name);
+  if (exact) return exact;
+  const k = normKey(name).replace(/\s+/g, '');
+  if (k.replace(/^\d/, '').length < 3) return null;
+  const hits = new Set(PREFIX_NAMES.filter(([, n]) => n.startsWith(k)).map(([num]) => num));
+  return hits.size === 1 ? [...hits][0] : null;
+}
+
+/** "I Pedro", "1ª Pedro", "primeira Pedro", "II Cor." -> "1 Pedro", "2 Cor." */
+function normalizeOrdinal(s) {
+  const m = s.match(/^\s*(primeir[oa]|segund[oa]|terceir[oa]|iii|ii|i|[123])\s*[ºª°]?(?:[oa](?=[\s.]))?\.?\s*(?=[a-zà-ÿ])/i);
+  if (!m) return s;
+  const w = m[1].toLowerCase();
+  const n = /^(primeir|i$|1)/.test(w) ? 1 : /^(segund|ii$|2)/.test(w) ? 2 : 3;
+  // "I" / "II" / "III" only count as numbers when followed by a space ("Is 41:10" is Isaías).
+  if (/^i+$/.test(w) && !/^\s*i+\s/i.test(s)) return s;
+  return `${n} ${s.slice(m[0].length)}`;
+}
+
+/**
+ * Parse a reference typed by a person, tolerant to the many ways it gets
+ * written: "Sal. 46:2", "Salmo 46:2", "salmos 46 2", "Sl 46.2", "salmo 46,2",
+ * "Salmo 46 versículo 2", "Sal 46:2 e 3", "Sal 46:2 a 4", "1ª Pedro 5:7",
+ * "I Coríntios 13:4", "apoc 21 4", "Salmo 23" (whole chapter).
+ */
+export function parseReferenceInput(raw) {
+  const original = String(raw ?? '').replace(/\u00a0/g, ' ').trim();
+  if (!original) return null;
+  // Several citations ("Sal. 46:2; Mt 6:33"): use the first one.
+  if (original.includes(';')) return parseReferenceInput(original.split(';')[0]);
+  const direct = parseCitation(original);
+  if (direct) return direct;
+
+  let s = normalizeOrdinal(original.normalize('NFC'));
+  const m = s.match(/^(\d?\s*[^\d]+?)\s*(\d+)(.*)$/);
+  if (!m) return null;
+  const bookText = m[1].replace(/[\s,.:;]*(?:cap[ií]tulo|cap)\.?\s*$/i, '').replace(/[\s,.:;]+$/, '');
+  const book = lookupBookLoose(bookText);
+  if (!book) return null;
+  const chapter = Number(m[2]);
+
+  let rest = m[3]
+    .toLowerCase()
+    .replace(/[–—]/g, '-')
+    .replace(/(\d)[a-d]\b/g, '$1') // "2a" (first half of a verse)
+    .replace(/\b(?:vers[ií]culos?|vers|vv?|ver)\b\.?/g, ':')
+    .replace(/\s+(?:a|at[eé])\s+/g, '-')
+    .replace(/\s+e\s+/g, ',')
+    .trim();
+  // Chapter range: "Salmos 46-48", "Jer 40 a 41" (no verse separator).
+  const chapterRange = rest.match(/^-\s*(\d+)$/);
+  if (chapterRange) return { book, chapter, chapter_end: Number(chapterRange[1]), ranges: null };
+  if (!rest) return { book, chapter, chapter_end: null, ranges: null };
+  // Separator between chapter and verses: ":", ".", "," or just a space.
+  const vm = rest.match(/^(?:[,.]?\s*:?\s*)(\d[\d\s,.\-]*)$/);
+  if (!vm) return null;
+  const ranges = parseVerseList(vm[1].replace(/\./g, ',').replace(/(\d)\s+(?=\d)/g, '$1,'));
+  if (!ranges.length) return null;
+  return { book, chapter, chapter_end: null, ranges };
 }
 
 function parseVerseList(str) {

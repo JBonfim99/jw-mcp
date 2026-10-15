@@ -4,7 +4,7 @@
  */
 import { getLocale, wolUrl, assertWolUrl, LANG_SCHEMA } from './locale.js';
 import { fetchWolHtml } from './wol-http.js';
-import { parseCitation, citationIncludes, formatCitation, lookupBook } from './scripture-refs.js';
+import { parseCitation, parseReferenceInput, lookupBookLoose, citationIncludes, formatCitation, lookupBook } from './scripture-refs.js';
 import {
   parseArticleBlocks,
   parseWatchtowerStudy,
@@ -51,8 +51,8 @@ export const getReferenceTool = {
     type: 'object',
     properties: {
       url: { type: 'string', description: 'URL da referência em wol.jw.org (ex.: https://wol.jw.org/pt/wol/pc/r5/lp-t/1204430/864/0)' },
-      reference: { type: 'string', description: 'Versículo a localizar no artigo, ex.: "Mateus 6:33" ou "Mat. 6:33". Opcional se book/chapter/verse forem informados.' },
-      book: { type: 'number', description: 'Número do livro (1-66). Alternativa a "reference".' },
+      reference: { type: 'string', description: 'Versículo a localizar no artigo, ex.: "Mateus 6:33", "Mat. 6:33", "Salmo 46:2", "sl 46 2". Opcional se book/chapter/verse forem informados.' },
+      book: { type: ['number', 'string'], description: 'Número (1-66) ou nome do livro. Alternativa a "reference".' },
       chapter: { type: 'number', description: 'Capítulo. Alternativa a "reference".' },
       verse: { type: 'number', description: 'Versículo. Alternativa a "reference".' },
       pages: { type: 'string', description: 'Páginas a extrair se não houver versículo, ex.: "pp. 14-15" ou "12". Pode ser o próprio título da referência.' },
@@ -190,10 +190,10 @@ export async function getReferenceImplementation(args = {}) {
     const maxParagraphs = Math.max(1, Math.min(Number(args.max_paragraphs ?? 8), 25));
 
     let target = null;
-    if (args.reference) target = parseCitation(args.reference);
+    if (args.reference) target = parseReferenceInput(args.reference);
     if (!target && args.book && args.chapter) {
       target = {
-        book: Number(args.book),
+        book: Number(args.book) || lookupBookLoose(String(args.book)),
         chapter: Number(args.chapter),
         chapter_end: null,
         ranges: args.verse ? [[Number(args.verse), Number(args.verse)]] : null,

@@ -2,7 +2,7 @@
 # Runs the test suite and surfaces failures as GitHub annotations, so they can
 # be read through the API without downloading the raw job log.
 set -uo pipefail
-node --test --test-reporter=tap tests/wol-parsers.test.js tests/auth/*.test.js tests/http-oauth.test.js > tap.txt 2>&1
+node --test --test-reporter=tap tests/wol-parsers.test.js tests/reference-input.test.js tests/usage-notice.test.js tests/auth/*.test.js tests/http-oauth.test.js > tap.txt 2>&1
 status=$?
 cat tap.txt
 if [ $status -ne 0 ]; then
